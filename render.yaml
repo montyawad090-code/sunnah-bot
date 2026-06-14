@@ -23,3 +23,9 @@ services:
         value: "17:30"
       - key: DAILY_TIP_TIME
         value: "09:00"
+      - key: HADITH_TIME
+        value: "08:00"
+      - key: FRIDAY_TIME
+        value: "09:30"
+      - key: FAST_REMIND_TIME
+        value: "20:00"

@@ -73,6 +73,50 @@ TIPS = [
     "Pray two rak'ah of Duha (forenoon) — charity for every joint in your body. (Muslim)",
 ]
 
+# A selection from the Forty Hadith of Imam an-Nawawi (rahimahullah).
+HADITHS = [
+    ("1", "Actions are but by intentions, and every person will have only what they intended.", "Bukhari & Muslim"),
+    ("2", "Islam is built on five: testifying there is no god but Allah and Muhammad is His Messenger, establishing prayer, giving zakat, fasting Ramadan, and Hajj.", "Bukhari & Muslim"),
+    ("3", "Worship Allah as though you see Him, for though you do not see Him, He surely sees you. (Ihsan)", "Muslim"),
+    ("4", "Whoever believes in Allah and the Last Day, let him speak good or remain silent.", "Bukhari & Muslim"),
+    ("5", "None of you truly believes until he loves for his brother what he loves for himself.", "Bukhari & Muslim"),
+    ("6", "Part of the perfection of a person's Islam is his leaving alone that which does not concern him.", "Tirmidhi"),
+    ("7", "The lawful is clear and the unlawful is clear, and between them are doubtful matters. Whoever avoids them protects his religion.", "Bukhari & Muslim"),
+    ("8", "Allah is Pure and accepts only what is pure.", "Muslim"),
+    ("9", "What I have forbidden you, avoid; what I have commanded you, do as much of it as you can.", "Bukhari & Muslim"),
+    ("10", "Be mindful of Allah and He will protect you. Be mindful of Allah and you will find Him before you.", "Tirmidhi"),
+    ("11", "Leave what makes you doubt for what does not make you doubt.", "Tirmidhi"),
+    ("12", "Allah does not look at your forms or wealth, but He looks at your hearts and your deeds.", "Muslim"),
+    ("13", "The strong believer is better and more beloved to Allah than the weak believer, though in each there is good. Strive for what benefits you, seek Allah's help, and do not give up.", "Muslim"),
+    ("14", "Do not be angry.", "Bukhari"),
+    ("15", "Allah has prescribed excellence (ihsan) in all things.", "Muslim"),
+    ("16", "Fear Allah wherever you are; follow a bad deed with a good one to wipe it out; and treat people with good character.", "Tirmidhi"),
+    ("17", "Whoever removes a worldly hardship from a believer, Allah will remove from him a hardship on the Day of Resurrection.", "Muslim"),
+    ("18", "The most beloved deeds to Allah are the most consistent, even if they are small.", "Bukhari & Muslim"),
+    ("19", "Make things easy and do not make them difficult; give glad tidings and do not repel people.", "Bukhari & Muslim"),
+    ("20", "Richness is not having many possessions; rather, true richness is the richness of the soul.", "Bukhari & Muslim"),
+]
+
+# Fasting occasions of the Hijri month — neutral phrasing so the caller can say
+# "Today is …" or "Tomorrow is …".
+def fasting_special(hijri_day, hijri_month):
+    """Return a list of occasion phrases for the given Hijri day/month."""
+    msgs = []
+    # White days — the 13th, 14th, 15th of every Hijri month
+    if hijri_day in (13, 14, 15):
+        msgs.append("🤍 a *White Day* (the " + str(hijri_day) + "th) — "
+                    "“fasting three days each month is like fasting the whole month.” (Bukhari)")
+    # Muharram (month 1): Ashura on the 10th (and the 9th)
+    if hijri_month == 1 and hijri_day in (9, 10):
+        msgs.append("🌙 *Ashura* (Muharram " + str(hijri_day) + ") — fasting the 10th (with the 9th) expiates the past year's sins. (Muslim)")
+    # Dhul-Hijjah (month 12): Day of Arafah on the 9th (for non-pilgrims)
+    if hijri_month == 12 and hijri_day == 9:
+        msgs.append("⛰️ the *Day of Arafah* — fasting it expiates the sins of two years. (Muslim) (For those not on Hajj.)")
+    # Shawwal (month 10): the six fasts after Eid
+    if hijri_month == 10 and 2 <= hijri_day <= 7:
+        msgs.append("✨ one of the *Six of Shawwal* — “whoever fasts Ramadan then six of Shawwal, it is as if he fasted the whole year.” (Muslim)")
+    return msgs
+
 CHECKLIST = (
     "🕌 *Salah & Adhkar*\n"
     "▫️ Pray the 5 prayers on time\n"
@@ -135,6 +179,9 @@ if not TOKEN or "PUT_" in TOKEN:
 MORNING = cfg("MORNING_TIME", "morning_time", "07:00")
 EVENING = cfg("EVENING_TIME", "evening_time", "17:30")
 TIP_TIME = cfg("DAILY_TIP_TIME", "daily_tip_time", "09:00")
+HADITH_TIME = cfg("HADITH_TIME", "hadith_time", "08:00")        # daily hadith
+FRIDAY_TIME = cfg("FRIDAY_TIME", "friday_time", "09:30")        # Jumu'ah pack
+FAST_REMIND_TIME = cfg("FAST_REMIND_TIME", "fast_remind_time", "20:00")  # eve-of-fast nudge
 
 # On an always-on host the filesystem is wiped on every restart, so chat_id /
 # city must come from durable env vars (Fly secrets). Locally they persist in
@@ -191,6 +238,14 @@ def fetch_prayers():
             t = j["data"]["timings"]
             times = {k: t[k][:5] for k in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]}
             state["prayers"] = {"date": today.isoformat(), "times": times}
+            # capture the Hijri date for fasting / occasion reminders
+            try:
+                h = j["data"]["date"]["hijri"]
+                state["hijri"] = {"day": int(h["day"]), "month": int(h["month"]["number"]),
+                                  "monthName": h["month"]["en"], "year": h["year"],
+                                  "date": today.isoformat()}
+            except Exception:
+                pass
             save_json(STATE_PATH, state)
             return times
     except Exception as e:
@@ -260,6 +315,46 @@ def scheduler_loop():
                     send("🌇 *Evening adhkar time*\n\nأَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ\n_We have entered the evening and the dominion belongs to Allah._\n\nDon't forget to review your Sunnah list today.")
                     mark("evening")
 
+                # hadith of the day (cycles through Nawawi's Forty)
+                if due("hadith", HADITH_TIME, now):
+                    n, txt, ref = HADITHS[datetime.date.today().toordinal() % len(HADITHS)]
+                    send(f"📖 *Hadith of the day* (Nawawi #{n})\n\n“{txt}”\n\n_— {ref}_")
+                    mark("hadith")
+
+                wd = now.weekday()  # Mon=0 … Fri=4 … Sun=6
+                hij = state.get("hijri") or {}
+                hd, hm = hij.get("day"), hij.get("month")
+
+                # today's fasting occasion (white days, Ashura, Arafah, Shawwal)
+                if hd and due("occasion", HADITH_TIME, now):
+                    occ = fasting_special(hd, hm)
+                    if occ:
+                        send("🗓️ *Today* is " + ("; ".join(occ)) + "\n\nA blessed day to fast if you're able. 🤍")
+                    mark("occasion")
+
+                # Jumu'ah (Friday) pack
+                if wd == 4 and due("jumuah", FRIDAY_TIME, now):
+                    send("🕌 *Jumu'ah Mubarak!* Today's Sunnah acts:\n\n"
+                         "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
+                         "🚿 *Ghusl* and wear your best clothes.\n"
+                         "🤲 Abundant *salawat* on the Prophet ﷺ — they are presented to him today. (Abu Dawud)\n"
+                         "⏳ Watch for the *last hour before Maghrib* — a time when dua is answered. (Bukhari)")
+                    mark("jumuah")
+
+                # evening nudge to plan fasting tomorrow (suhoor)
+                if due("fast_eve", FAST_REMIND_TIME, now):
+                    eve = []
+                    if wd == 6:
+                        eve.append("🌙 *Monday* — a day the Prophet ﷺ fasted. (Tirmidhi)")
+                    if wd == 2:
+                        eve.append("🌙 *Thursday* — a day the Prophet ﷺ fasted. (Tirmidhi)")
+                    if hd:
+                        eve += fasting_special(hd + 1, hm)  # tomorrow's occasion
+                    if eve:
+                        send("🍽️ *Plan to fast tomorrow?*\n\nTomorrow is " + "; ".join(eve) +
+                             "\n\nMake the intention and remember suhoor. 🤍")
+                    mark("fast_eve")
+
                 # prayer-time reminders
                 t = ensure_prayers()
                 if t:
@@ -267,6 +362,13 @@ def scheduler_loop():
                         if due("salah_" + name, hhmm, now):
                             send(f"🕌 *It's time for {name}* ({fmt12(hhmm)})\n\nHayya 'ala-s-salah. Leave what you're doing and pray. 🤍")
                             mark("salah_" + name)
+                    # Friday: dua reminder in the last hour before Maghrib
+                    if wd == 4 and t.get("Maghrib"):
+                        mh, mm = map(int, t["Maghrib"].split(":"))
+                        last = (datetime.datetime.now().replace(hour=mh, minute=mm) - datetime.timedelta(minutes=60)).strftime("%H:%M")
+                        if due("friday_dua", last, now):
+                            send("⏳ *The last hour before Maghrib (Friday)*\n\nThis is a time when no Muslim asks Allah for good except that He grants it. (Bukhari)\n\nRaise your hands and make du'a. 🤲")
+                            mark("friday_dua")
         except Exception as e:
             print("Scheduler error:", e)
         time.sleep(30)
@@ -279,6 +381,9 @@ HELP = (
     "/city <City, Country> — set location\n"
     "/times — today's prayer times\n"
     "/today — Sunnah checklist\n"
+    "/hadith — a hadith from Nawawi's Forty\n"
+    "/friday — the Jumu'ah Sunnah acts\n"
+    "/fasting — recommended fasting days now\n"
     "/dua — a prophetic supplication\n"
     "/tip — a Sunnah tip\n"
     "/stop — pause reminders\n"
@@ -318,6 +423,30 @@ def handle(text, chat_id):
 
     elif low.startswith("/today"):
         send(CHECKLIST, chat_id)
+
+    elif low.startswith("/hadith"):
+        n, txt, ref = random.choice(HADITHS)
+        send(f"📖 *Hadith* (Nawawi #{n})\n\n“{txt}”\n\n_— {ref}_", chat_id)
+
+    elif low.startswith("/friday") or low.startswith("/jumuah") or low.startswith("/jumah"):
+        send("🕌 *Jumu'ah Sunnah acts*\n\n"
+             "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
+             "🚿 *Ghusl* and wear your best clothes; use perfume.\n"
+             "⏱️ Go *early* to the masjid.\n"
+             "🤲 Abundant *salawat* on the Prophet ﷺ. (Abu Dawud)\n"
+             "⏳ The *last hour before Maghrib* — a time du'a is answered. (Bukhari)", chat_id)
+
+    elif low.startswith("/fasting") or low.startswith("/fast") and not low.startswith("/faste"):
+        hij = state.get("hijri") or {}
+        lines = ["🍽️ *Recommended fasting*\n",
+                 "• *Mondays & Thursdays* — the Prophet ﷺ fasted them. (Tirmidhi)",
+                 "• The *3 White Days* — 13th, 14th, 15th of each Hijri month. (Bukhari)"]
+        if hij.get("day"):
+            lines.append(f"\n_Today is {hij['day']} {hij.get('monthName','')} {hij.get('year','')} AH._")
+            occ = fasting_special(hij["day"], hij["month"])
+            if occ:
+                lines.append("👉 Today is " + "; ".join(occ))
+        send("\n".join(lines), chat_id)
 
     elif low.startswith("/dua"):
         d = random.choice(DUAS)

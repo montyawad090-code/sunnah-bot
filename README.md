@@ -36,10 +36,21 @@ prayer times, morning & evening adhkar, and a daily Sunnah tip.
 | `/city <City, Country>` | Set location for prayer times |
 | `/times` | Today's prayer times |
 | `/today` | The full Sunnah checklist |
+| `/hadith` | A hadith from Nawawi's Forty |
+| `/friday` | The Jumu'ah Sunnah acts |
+| `/fasting` | Recommended fasting days (incl. today's occasion) |
 | `/dua` | A prophetic supplication |
 | `/tip` | A random Sunnah tip |
 | `/stop` / `/resume` | Pause / resume reminders |
 | `/help` | List commands |
+
+### Automatic reminders
+
+- **Every prayer time** + **morning/evening adhkar** + a **daily Sunnah tip**
+- **Hadith of the day** (08:00) — cycles through Nawawi's Forty
+- **Jumu'ah pack** every Friday (09:30) — Al-Kahf, ghusl, salawat, last-hour du'a
+- **Last hour before Maghrib on Friday** — du'a reminder
+- **Fasting nudges** (evening) — Mon/Thu, the 3 White Days, Ashura, Arafah, six of Shawwal
 
 ## Keeping it running 24/7
 

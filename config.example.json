@@ -5,5 +5,8 @@
   "country": "",
   "morning_time": "07:00",
   "evening_time": "17:30",
-  "daily_tip_time": "09:00"
+  "daily_tip_time": "09:00",
+  "hadith_time": "08:00",
+  "friday_time": "09:30",
+  "fast_remind_time": "20:00"
 }
