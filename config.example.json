@@ -1,0 +1,9 @@
+{
+  "bot_token": "PUT_YOUR_BOTFATHER_TOKEN_HERE",
+  "chat_id": null,
+  "city": "",
+  "country": "",
+  "morning_time": "07:00",
+  "evening_time": "17:30",
+  "daily_tip_time": "09:00"
+}

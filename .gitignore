@@ -1,0 +1,5 @@
+# NEVER commit your secrets — the token & chat id live in env vars on the host
+config.json
+state.json
+__pycache__/
+*.pyc

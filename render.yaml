@@ -1,0 +1,25 @@
+# Render blueprint — deploys the Sunnah bot on the free plan.
+# Push the contents of this `bot/` folder as a GitHub repo, then on Render:
+# New +  ->  Blueprint  ->  pick the repo. Set the secret values when prompted.
+services:
+  - type: web
+    name: sunnah-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python sunnah_bot.py
+    envVars:
+      - key: BOT_TOKEN          # from @BotFather — keep secret
+        sync: false
+      - key: CHAT_ID            # your Telegram chat id (see DEPLOY.md)
+        sync: false
+      - key: CITY
+        value: "Bristol"
+      - key: COUNTRY
+        value: "United Kingdom"
+      - key: MORNING_TIME
+        value: "07:00"
+      - key: EVENING_TIME
+        value: "17:30"
+      - key: DAILY_TIP_TIME
+        value: "09:00"
