@@ -41,8 +41,13 @@ prayer times, morning & evening adhkar, and a daily Sunnah tip.
 | `/fasting` | Recommended fasting days (incl. today's occasion) |
 | `/dua` | A prophetic supplication |
 | `/tip` | A random Sunnah tip |
+| `/language` | Switch between العربية and English (or `/language ar`) |
 | `/stop` / `/resume` | Pause / resume reminders |
 | `/help` | List commands |
+
+The bot speaks **Arabic or English** — every reminder, hadith, and command reply is
+translated. Switch anytime with `/language`, or set the default with the `LANG` env var
+(`en` / `ar`).
 
 ### Automatic reminders
 

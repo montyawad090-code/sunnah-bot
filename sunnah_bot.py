@@ -37,112 +37,154 @@ API = "https://api.telegram.org/bot{token}/{method}"
 # ----------------------------------------------------------------------------
 # Content (well-known acts from the Sunnah; references are general pointers)
 # ----------------------------------------------------------------------------
+# (en_label, arabic, en_meaning, ar_label)
 DUAS = [
     ("Morning", "أَصْبَحْنَا وَأَصْبَحَ الْمُلْكُ لِلَّهِ",
-     "We have entered the morning and the dominion belongs to Allah."),
-    ("Before eating", "بِسْمِ اللَّهِ", "In the name of Allah."),
+     "We have entered the morning and the dominion belongs to Allah.", "أذكار الصباح"),
+    ("Before eating", "بِسْمِ اللَّهِ", "In the name of Allah.", "قبل الطعام"),
     ("After eating", "الْحَمْدُ لِلَّهِ الَّذِي أَطْعَمَنِي هَذَا",
-     "Praise be to Allah who fed me this."),
+     "Praise be to Allah who fed me this.", "بعد الطعام"),
     ("Leaving home", "بِسْمِ اللَّهِ تَوَكَّلْتُ عَلَى اللَّهِ",
-     "In the name of Allah, I place my trust in Allah."),
+     "In the name of Allah, I place my trust in Allah.", "الخروج من البيت"),
     ("Distress", "لَا إِلَٰهَ إِلَّا اللَّهُ الْعَظِيمُ الْحَلِيمُ",
-     "There is no god but Allah, the Magnificent, the Forbearing."),
+     "There is no god but Allah, the Magnificent, the Forbearing.", "عند الكرب"),
     ("Seeking forgiveness", "أَسْتَغْفِرُ اللَّهَ وَأَتُوبُ إِلَيْهِ",
-     "I seek Allah's forgiveness and turn to Him in repentance."),
+     "I seek Allah's forgiveness and turn to Him in repentance.", "الاستغفار"),
     ("Salawat", "اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى نَبِيِّنَا مُحَمَّدٍ",
-     "O Allah, send blessings and peace upon our Prophet Muhammad."),
+     "O Allah, send blessings and peace upon our Prophet Muhammad.", "الصلاة على النبي ﷺ"),
     ("Before sleep", "بِاسْمِكَ اللَّهُمَّ أَمُوتُ وَأَحْيَا",
-     "In Your name O Allah, I die and I live."),
+     "In Your name O Allah, I die and I live.", "قبل النوم"),
 ]
 
+# (english, arabic)
 TIPS = [
-    "Use the miswak / brush your teeth — the Prophet ﷺ loved it before every prayer. (Bukhari)",
-    "Smile at someone today — your smile in your brother's face is charity. (Tirmidhi)",
-    "Eat with your right hand and from what is nearest to you. (Bukhari & Muslim)",
-    "Say Bismillah before you begin, and Alhamdulillah after you finish.",
-    "Pray the 12 Sunnah rak'ah and a house is built for you in Paradise. (Muslim)",
-    "Send salawat on the Prophet ﷺ — for each one, Allah sends ten blessings on you. (Muslim)",
-    "Spread salam to those you know and those you don't. (Bukhari)",
-    "Control yourself when angry — that is true strength. (Bukhari)",
-    "Sleep on your right side after making wudu, as the Prophet ﷺ did. (Bukhari)",
-    "Give in charity today, even half a date. (Bukhari)",
-    "The most beloved deeds to Allah are the consistent ones, even if small. (Bukhari)",
-    "Read some Qur'an today — the best of you learn it and teach it. (Bukhari)",
-    "Honour your parents — Allah's pleasure is in the parent's pleasure. (Tirmidhi)",
-    "Seek forgiveness often — the Prophet ﷺ did so 70+ times a day. (Bukhari)",
-    "Pray two rak'ah of Duha (forenoon) — charity for every joint in your body. (Muslim)",
+    ("Use the miswak / brush your teeth — the Prophet ﷺ loved it before every prayer. (Bukhari)",
+     "استعمل السواك — كان النبي ﷺ يحبه عند كل صلاة. (البخاري)"),
+    ("Smile at someone today — your smile in your brother's face is charity. (Tirmidhi)",
+     "ابتسم لأحدهم اليوم — تبسّمك في وجه أخيك صدقة. (الترمذي)"),
+    ("Eat with your right hand and from what is nearest to you. (Bukhari & Muslim)",
+     "كُل بيمينك ومما يليك. (البخاري ومسلم)"),
+    ("Say Bismillah before you begin, and Alhamdulillah after you finish.",
+     "قل بسم الله قبل أن تبدأ، والحمد لله بعد أن تنتهي."),
+    ("Pray the 12 Sunnah rak'ah and a house is built for you in Paradise. (Muslim)",
+     "صلِّ ١٢ ركعة من السنن يُبنَ لك بها بيت في الجنة. (مسلم)"),
+    ("Send salawat on the Prophet ﷺ — for each one, Allah sends ten blessings on you. (Muslim)",
+     "أكثر من الصلاة على النبي ﷺ — بكل واحدة يصلي الله عليك عشرًا. (مسلم)"),
+    ("Spread salam to those you know and those you don't. (Bukhari)",
+     "أفشِ السلام على من عرفت ومن لم تعرف. (البخاري)"),
+    ("Control yourself when angry — that is true strength. (Bukhari)",
+     "املك نفسك عند الغضب — فتلك هي القوة الحقيقية. (البخاري)"),
+    ("Sleep on your right side after making wudu, as the Prophet ﷺ did. (Bukhari)",
+     "نَم على شقك الأيمن بعد الوضوء، كما كان النبي ﷺ يفعل. (البخاري)"),
+    ("Give in charity today, even half a date. (Bukhari)",
+     "تصدّق اليوم ولو بشقّ تمرة. (البخاري)"),
+    ("The most beloved deeds to Allah are the consistent ones, even if small. (Bukhari)",
+     "أحب الأعمال إلى الله أدومها وإن قلّ. (البخاري)"),
+    ("Read some Qur'an today — the best of you learn it and teach it. (Bukhari)",
+     "اقرأ وردًا من القرآن اليوم — خيركم من تعلّمه وعلّمه. (البخاري)"),
+    ("Honour your parents — Allah's pleasure is in the parent's pleasure. (Tirmidhi)",
+     "برّ والديك — رضا الرب في رضا الوالد. (الترمذي)"),
+    ("Seek forgiveness often — the Prophet ﷺ did so 70+ times a day. (Bukhari)",
+     "أكثر من الاستغفار — كان النبي ﷺ يستغفر أكثر من ٧٠ مرة في اليوم. (البخاري)"),
+    ("Pray two rak'ah of Duha (forenoon) — charity for every joint in your body. (Muslim)",
+     "صلِّ ركعتي الضحى — صدقة عن كل مفصل في جسدك. (مسلم)"),
 ]
 
-# A selection from the Forty Hadith of Imam an-Nawawi (rahimahullah).
+# (number, english, arabic, ref) — from the Forty Hadith of Imam an-Nawawi.
 HADITHS = [
-    ("1", "Actions are but by intentions, and every person will have only what they intended.", "Bukhari & Muslim"),
-    ("2", "Islam is built on five: testifying there is no god but Allah and Muhammad is His Messenger, establishing prayer, giving zakat, fasting Ramadan, and Hajj.", "Bukhari & Muslim"),
-    ("3", "Worship Allah as though you see Him, for though you do not see Him, He surely sees you. (Ihsan)", "Muslim"),
-    ("4", "Whoever believes in Allah and the Last Day, let him speak good or remain silent.", "Bukhari & Muslim"),
-    ("5", "None of you truly believes until he loves for his brother what he loves for himself.", "Bukhari & Muslim"),
-    ("6", "Part of the perfection of a person's Islam is his leaving alone that which does not concern him.", "Tirmidhi"),
-    ("7", "The lawful is clear and the unlawful is clear, and between them are doubtful matters. Whoever avoids them protects his religion.", "Bukhari & Muslim"),
-    ("8", "Allah is Pure and accepts only what is pure.", "Muslim"),
-    ("9", "What I have forbidden you, avoid; what I have commanded you, do as much of it as you can.", "Bukhari & Muslim"),
-    ("10", "Be mindful of Allah and He will protect you. Be mindful of Allah and you will find Him before you.", "Tirmidhi"),
-    ("11", "Leave what makes you doubt for what does not make you doubt.", "Tirmidhi"),
-    ("12", "Allah does not look at your forms or wealth, but He looks at your hearts and your deeds.", "Muslim"),
-    ("13", "The strong believer is better and more beloved to Allah than the weak believer, though in each there is good. Strive for what benefits you, seek Allah's help, and do not give up.", "Muslim"),
-    ("14", "Do not be angry.", "Bukhari"),
-    ("15", "Allah has prescribed excellence (ihsan) in all things.", "Muslim"),
-    ("16", "Fear Allah wherever you are; follow a bad deed with a good one to wipe it out; and treat people with good character.", "Tirmidhi"),
-    ("17", "Whoever removes a worldly hardship from a believer, Allah will remove from him a hardship on the Day of Resurrection.", "Muslim"),
-    ("18", "The most beloved deeds to Allah are the most consistent, even if they are small.", "Bukhari & Muslim"),
-    ("19", "Make things easy and do not make them difficult; give glad tidings and do not repel people.", "Bukhari & Muslim"),
-    ("20", "Richness is not having many possessions; rather, true richness is the richness of the soul.", "Bukhari & Muslim"),
+    ("1", "Actions are but by intentions, and every person will have only what they intended.", "إنما الأعمال بالنيات، وإنما لكل امرئ ما نوى.", "Bukhari & Muslim"),
+    ("2", "Islam is built on five: testifying there is no god but Allah and Muhammad is His Messenger, establishing prayer, giving zakat, fasting Ramadan, and Hajj.", "بُني الإسلام على خمس: شهادة أن لا إله إلا الله وأن محمدًا رسول الله، وإقام الصلاة، وإيتاء الزكاة، وصوم رمضان، وحج البيت.", "Bukhari & Muslim"),
+    ("3", "Worship Allah as though you see Him, for though you do not see Him, He surely sees you. (Ihsan)", "أن تعبد الله كأنك تراه، فإن لم تكن تراه فإنه يراك. (الإحسان)", "Muslim"),
+    ("4", "Whoever believes in Allah and the Last Day, let him speak good or remain silent.", "من كان يؤمن بالله واليوم الآخر فليقل خيرًا أو ليصمت.", "Bukhari & Muslim"),
+    ("5", "None of you truly believes until he loves for his brother what he loves for himself.", "لا يؤمن أحدكم حتى يحب لأخيه ما يحب لنفسه.", "Bukhari & Muslim"),
+    ("6", "Part of the perfection of a person's Islam is his leaving alone that which does not concern him.", "من حُسن إسلام المرء تركه ما لا يعنيه.", "Tirmidhi"),
+    ("7", "The lawful is clear and the unlawful is clear, and between them are doubtful matters. Whoever avoids them protects his religion.", "الحلال بيّن والحرام بيّن، وبينهما أمور مشتبهات، فمن اتقى الشبهات استبرأ لدينه.", "Bukhari & Muslim"),
+    ("8", "Allah is Pure and accepts only what is pure.", "إن الله طيّب لا يقبل إلا طيّبًا.", "Muslim"),
+    ("9", "What I have forbidden you, avoid; what I have commanded you, do as much of it as you can.", "ما نهيتكم عنه فاجتنبوه، وما أمرتكم به فأتوا منه ما استطعتم.", "Bukhari & Muslim"),
+    ("10", "Be mindful of Allah and He will protect you. Be mindful of Allah and you will find Him before you.", "احفظ الله يحفظك، احفظ الله تجده تجاهك.", "Tirmidhi"),
+    ("11", "Leave what makes you doubt for what does not make you doubt.", "دع ما يريبك إلى ما لا يريبك.", "Tirmidhi"),
+    ("12", "Allah does not look at your forms or wealth, but He looks at your hearts and your deeds.", "إن الله لا ينظر إلى صوركم وأموالكم، ولكن ينظر إلى قلوبكم وأعمالكم.", "Muslim"),
+    ("13", "The strong believer is better and more beloved to Allah than the weak believer. Strive for what benefits you, seek Allah's help, and do not give up.", "المؤمن القوي خير وأحب إلى الله من المؤمن الضعيف. احرص على ما ينفعك واستعن بالله ولا تعجز.", "Muslim"),
+    ("14", "Do not be angry.", "لا تغضب.", "Bukhari"),
+    ("15", "Allah has prescribed excellence (ihsan) in all things.", "إن الله كتب الإحسان على كل شيء.", "Muslim"),
+    ("16", "Fear Allah wherever you are; follow a bad deed with a good one to wipe it out; and treat people with good character.", "اتق الله حيثما كنت، وأتبع السيئة الحسنة تمحها، وخالق الناس بخلق حسن.", "Tirmidhi"),
+    ("17", "Whoever removes a worldly hardship from a believer, Allah will remove from him a hardship on the Day of Resurrection.", "من نفّس عن مؤمن كربة من كرب الدنيا نفّس الله عنه كربة من كرب يوم القيامة.", "Muslim"),
+    ("18", "The most beloved deeds to Allah are the most consistent, even if they are small.", "أحب الأعمال إلى الله أدومها وإن قلّ.", "Bukhari & Muslim"),
+    ("19", "Make things easy and do not make them difficult; give glad tidings and do not repel people.", "يسّروا ولا تعسّروا، وبشّروا ولا تنفّروا.", "Bukhari & Muslim"),
+    ("20", "Richness is not having many possessions; rather, true richness is the richness of the soul.", "ليس الغنى عن كثرة العَرَض، ولكن الغنى غنى النفس.", "Bukhari & Muslim"),
 ]
 
-# Fasting occasions of the Hijri month — neutral phrasing so the caller can say
-# "Today is …" or "Tomorrow is …".
+PRAYER_AR = {"Fajr": "الفجر", "Sunrise": "الشروق", "Dhuhr": "الظهر",
+             "Asr": "العصر", "Maghrib": "المغرب", "Isha": "العشاء"}
+
+# Fasting occasions of the Hijri month — returns phrases in the current language.
 def fasting_special(hijri_day, hijri_month):
-    """Return a list of occasion phrases for the given Hijri day/month."""
     msgs = []
-    # White days — the 13th, 14th, 15th of every Hijri month
     if hijri_day in (13, 14, 15):
-        msgs.append("🤍 a *White Day* (the " + str(hijri_day) + "th) — "
-                    "“fasting three days each month is like fasting the whole month.” (Bukhari)")
-    # Muharram (month 1): Ashura on the 10th (and the 9th)
+        msgs.append(L("🤍 a *White Day* (the " + str(hijri_day) + "th) — “fasting three days each month is like fasting the whole month.” (Bukhari)",
+                      "🤍 *يوم بيض* (" + str(hijri_day) + ") — «صيام ثلاثة أيام من كل شهر كصيام الدهر». (البخاري)"))
     if hijri_month == 1 and hijri_day in (9, 10):
-        msgs.append("🌙 *Ashura* (Muharram " + str(hijri_day) + ") — fasting the 10th (with the 9th) expiates the past year's sins. (Muslim)")
-    # Dhul-Hijjah (month 12): Day of Arafah on the 9th (for non-pilgrims)
+        msgs.append(L("🌙 *Ashura* (Muharram " + str(hijri_day) + ") — fasting the 10th (with the 9th) expiates the past year's sins. (Muslim)",
+                      "🌙 *عاشوراء* (محرم " + str(hijri_day) + ") — صيام العاشر (مع التاسع) يكفّر السنة الماضية. (مسلم)"))
     if hijri_month == 12 and hijri_day == 9:
-        msgs.append("⛰️ the *Day of Arafah* — fasting it expiates the sins of two years. (Muslim) (For those not on Hajj.)")
-    # Shawwal (month 10): the six fasts after Eid
+        msgs.append(L("⛰️ the *Day of Arafah* — fasting it expiates the sins of two years. (Muslim) (For those not on Hajj.)",
+                      "⛰️ *يوم عرفة* — صيامه يكفّر سنتين. (مسلم) (لغير الحاج.)"))
     if hijri_month == 10 and 2 <= hijri_day <= 7:
-        msgs.append("✨ one of the *Six of Shawwal* — “whoever fasts Ramadan then six of Shawwal, it is as if he fasted the whole year.” (Muslim)")
+        msgs.append(L("✨ one of the *Six of Shawwal* — “whoever fasts Ramadan then six of Shawwal, it is as if he fasted the whole year.” (Muslim)",
+                      "✨ من *ست شوال* — «من صام رمضان ثم أتبعه ستًا من شوال كان كصيام الدهر». (مسلم)"))
     return msgs
 
-CHECKLIST = (
-    "🕌 *Salah & Adhkar*\n"
-    "▫️ Pray the 5 prayers on time\n"
-    "▫️ 12 Sunnah rak'ah (rawatib)\n"
-    "▫️ Morning & evening adhkar\n"
-    "▫️ Ayat al-Kursi after each salah\n"
-    "▫️ Tasbih 33×3 after salah\n"
-    "▫️ Witr before sleeping\n\n"
-    "🌿 *Daily Sunan*\n"
-    "▫️ Miswak / brush\n"
-    "▫️ Bismillah + right hand when eating\n"
-    "▫️ Send salawat on the Prophet ﷺ\n"
-    "▫️ Istighfar 100×\n"
-    "▫️ Read some Qur'an\n"
-    "▫️ Sleep on right side after wudu\n\n"
-    "📅 *Weekly*\n"
-    "▫️ Surah Al-Kahf + ghusl on Friday\n"
-    "▫️ Fast Monday & Thursday\n"
-    "▫️ The 3 white days (13–15)\n"
-    "▫️ Keep ties with family\n\n"
-    "💛 *Akhlaq*\n"
-    "▫️ Smile & spread salam\n"
-    "▫️ Be truthful, restrain anger\n"
-    "▫️ Honour parents\n"
-    "▫️ Speak good or stay silent"
-)
+def checklist():
+    return L(
+        "🕌 *Salah & Adhkar*\n"
+        "▫️ Pray the 5 prayers on time\n"
+        "▫️ 12 Sunnah rak'ah (rawatib)\n"
+        "▫️ Morning & evening adhkar\n"
+        "▫️ Ayat al-Kursi after each salah\n"
+        "▫️ Tasbih 33×3 after salah\n"
+        "▫️ Witr before sleeping\n\n"
+        "🌿 *Daily Sunan*\n"
+        "▫️ Miswak / brush\n"
+        "▫️ Bismillah + right hand when eating\n"
+        "▫️ Send salawat on the Prophet ﷺ\n"
+        "▫️ Istighfar 100×\n"
+        "▫️ Read some Qur'an\n"
+        "▫️ Sleep on right side after wudu\n\n"
+        "📅 *Weekly*\n"
+        "▫️ Surah Al-Kahf + ghusl on Friday\n"
+        "▫️ Fast Monday & Thursday\n"
+        "▫️ The 3 white days (13–15)\n"
+        "▫️ Keep ties with family\n\n"
+        "💛 *Akhlaq*\n"
+        "▫️ Smile & spread salam\n"
+        "▫️ Be truthful, restrain anger\n"
+        "▫️ Honour parents\n"
+        "▫️ Speak good or stay silent",
+        # ---- Arabic ----
+        "🕌 *الصلاة والأذكار*\n"
+        "▫️ صلِّ الفروض الخمسة في وقتها\n"
+        "▫️ ١٢ ركعة من السنن الرواتب\n"
+        "▫️ أذكار الصباح والمساء\n"
+        "▫️ آية الكرسي بعد كل صلاة\n"
+        "▫️ التسبيح ٣٣×٣ بعد الصلاة\n"
+        "▫️ الوتر قبل النوم\n\n"
+        "🌿 *سنن يومية*\n"
+        "▫️ السواك\n"
+        "▫️ التسمية والأكل باليمين\n"
+        "▫️ الصلاة على النبي ﷺ\n"
+        "▫️ الاستغفار ١٠٠ مرة\n"
+        "▫️ قراءة وردٍ من القرآن\n"
+        "▫️ النوم على الشق الأيمن بعد الوضوء\n\n"
+        "📅 *أسبوعية*\n"
+        "▫️ سورة الكهف والغُسل يوم الجمعة\n"
+        "▫️ صيام الإثنين والخميس\n"
+        "▫️ الأيام البيض (١٣–١٥)\n"
+        "▫️ صلة الرحم\n\n"
+        "💛 *الأخلاق*\n"
+        "▫️ الابتسامة وإفشاء السلام\n"
+        "▫️ الصدق وكظم الغيظ\n"
+        "▫️ برّ الوالدين\n"
+        "▫️ قول الخير أو الصمت")
 
 # ----------------------------------------------------------------------------
 # Config / state
@@ -201,6 +243,11 @@ state.setdefault("last_update_id", 0)
 state.setdefault("prayers", None)          # {"date": "YYYY-MM-DD", "times": {...}}
 state.setdefault("sent_today", [])         # keys of reminders already sent today
 state.setdefault("sent_date", "")
+state.setdefault("lang", cfg("LANG", "lang", "en"))   # "en" or "ar"
+
+def L(en, ar):
+    """Pick the string for the user's current language."""
+    return ar if state.get("lang") == "ar" else en
 
 # ----------------------------------------------------------------------------
 # Telegram helpers
@@ -260,16 +307,16 @@ def ensure_prayers():
 
 def fmt12(hhmm):
     h, m = map(int, hhmm.split(":"))
-    ap = "PM" if h >= 12 else "AM"
+    ap = (("م" if h >= 12 else "ص") if state.get("lang") == "ar" else ("PM" if h >= 12 else "AM"))
     h = h % 12 or 12
     return f"{h}:{m:02d} {ap}"
 
 def times_message():
     t = ensure_prayers()
     if not t:
-        return "Set your city first, e.g. `/city Cairo, Egypt`"
-    lines = "\n".join(f"  *{n}* — {fmt12(v)}" for n, v in t.items())
-    return f"🕌 *Prayer times — {state['city']}*\n{lines}"
+        return L("Set your city first, e.g. `/city Cairo, Egypt`", "حدد مدينتك أولًا، مثال: `/city Cairo, Egypt`")
+    lines = "\n".join(L(f"  *{n}* — {fmt12(v)}", f"  *{PRAYER_AR.get(n, n)}* — {fmt12(v)}") for n, v in t.items())
+    return L(f"🕌 *Prayer times — {state['city']}*\n{lines}", f"🕌 *أوقات الصلاة — {state['city']}*\n{lines}")
 
 # ----------------------------------------------------------------------------
 # Reminder scheduling loop
@@ -304,21 +351,25 @@ def scheduler_loop():
 
                 if due("morning", MORNING, now):
                     d = DUAS[0]
-                    send(f"🌅 *Morning adhkar time*\n\n{d[1]}\n_{d[2]}_\n\nSay it 3× and start your day with Allah's remembrance.")
+                    send(L(f"🌅 *Morning adhkar time*\n\n{d[1]}\n_{d[2]}_\n\nSay it 3× and start your day with Allah's remembrance.",
+                           f"🌅 *وقت أذكار الصباح*\n\n{d[1]}\n\nقُلها ٣ مرات وابدأ يومك بذكر الله."))
                     mark("morning")
 
                 if due("tip", TIP_TIME, now):
-                    send("🌿 *Sunnah of the day*\n\n" + random.choice(TIPS))
+                    tp = random.choice(TIPS)
+                    send(L("🌿 *Sunnah of the day*\n\n" + tp[0], "🌿 *سنّة اليوم*\n\n" + tp[1]))
                     mark("tip")
 
                 if due("evening", EVENING, now):
-                    send("🌇 *Evening adhkar time*\n\nأَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ\n_We have entered the evening and the dominion belongs to Allah._\n\nDon't forget to review your Sunnah list today.")
+                    send(L("🌇 *Evening adhkar time*\n\nأَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ\n_We have entered the evening and the dominion belongs to Allah._\n\nDon't forget to review your Sunnah list today.",
+                           "🌇 *وقت أذكار المساء*\n\nأَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ\n\nولا تنسَ مراجعة قائمة سننك اليوم."))
                     mark("evening")
 
                 # hadith of the day (cycles through Nawawi's Forty)
                 if due("hadith", HADITH_TIME, now):
-                    n, txt, ref = HADITHS[datetime.date.today().toordinal() % len(HADITHS)]
-                    send(f"📖 *Hadith of the day* (Nawawi #{n})\n\n“{txt}”\n\n_— {ref}_")
+                    n, en, ar, ref = HADITHS[datetime.date.today().toordinal() % len(HADITHS)]
+                    send(L(f"📖 *Hadith of the day* (Nawawi #{n})\n\n“{en}”\n\n_— {ref}_",
+                           f"📖 *حديث اليوم* (النووي #{n})\n\n«{ar}»\n\n_— {ref}_"))
                     mark("hadith")
 
                 wd = now.weekday()  # Mon=0 … Fri=4 … Sun=6
@@ -329,30 +380,36 @@ def scheduler_loop():
                 if hd and due("occasion", HADITH_TIME, now):
                     occ = fasting_special(hd, hm)
                     if occ:
-                        send("🗓️ *Today* is " + ("; ".join(occ)) + "\n\nA blessed day to fast if you're able. 🤍")
+                        send(L("🗓️ *Today* is " + "; ".join(occ) + "\n\nA blessed day to fast if you're able. 🤍",
+                               "🗓️ *اليوم* " + "؛ ".join(occ) + "\n\nيوم مبارك للصيام إن استطعت. 🤍"))
                     mark("occasion")
 
                 # Jumu'ah (Friday) pack
                 if wd == 4 and due("jumuah", FRIDAY_TIME, now):
-                    send("🕌 *Jumu'ah Mubarak!* Today's Sunnah acts:\n\n"
-                         "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
-                         "🚿 *Ghusl* and wear your best clothes.\n"
-                         "🤲 Abundant *salawat* on the Prophet ﷺ — they are presented to him today. (Abu Dawud)\n"
-                         "⏳ Watch for the *last hour before Maghrib* — a time when dua is answered. (Bukhari)")
+                    send(L("🕌 *Jumu'ah Mubarak!* Today's Sunnah acts:\n\n"
+                           "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
+                           "🚿 *Ghusl* and wear your best clothes.\n"
+                           "🤲 Abundant *salawat* on the Prophet ﷺ — they are presented to him today. (Abu Dawud)\n"
+                           "⏳ Watch for the *last hour before Maghrib* — a time when dua is answered. (Bukhari)",
+                           "🕌 *جمعة مباركة!* من سنن اليوم:\n\n"
+                           "📖 اقرأ *سورة الكهف* — نور ما بين الجمعتين. (الحاكم)\n"
+                           "🚿 *الغُسل* وأفضل الثياب.\n"
+                           "🤲 الإكثار من *الصلاة على النبي ﷺ* — فهي معروضة عليه اليوم. (أبو داود)\n"
+                           "⏳ تحرَّ *الساعة الأخيرة قبل المغرب* — ساعة يُستجاب فيها الدعاء. (البخاري)"))
                     mark("jumuah")
 
                 # evening nudge to plan fasting tomorrow (suhoor)
                 if due("fast_eve", FAST_REMIND_TIME, now):
                     eve = []
                     if wd == 6:
-                        eve.append("🌙 *Monday* — a day the Prophet ﷺ fasted. (Tirmidhi)")
+                        eve.append(L("🌙 *Monday* — a day the Prophet ﷺ fasted. (Tirmidhi)", "🌙 *الإثنين* — يوم كان النبي ﷺ يصومه. (الترمذي)"))
                     if wd == 2:
-                        eve.append("🌙 *Thursday* — a day the Prophet ﷺ fasted. (Tirmidhi)")
+                        eve.append(L("🌙 *Thursday* — a day the Prophet ﷺ fasted. (Tirmidhi)", "🌙 *الخميس* — يوم كان النبي ﷺ يصومه. (الترمذي)"))
                     if hd:
                         eve += fasting_special(hd + 1, hm)  # tomorrow's occasion
                     if eve:
-                        send("🍽️ *Plan to fast tomorrow?*\n\nTomorrow is " + "; ".join(eve) +
-                             "\n\nMake the intention and remember suhoor. 🤍")
+                        send(L("🍽️ *Plan to fast tomorrow?*\n\nTomorrow is " + "; ".join(eve) + "\n\nMake the intention and remember suhoor. 🤍",
+                               "🍽️ *تنوي صيام الغد؟*\n\nالغد " + "؛ ".join(eve) + "\n\nاعقد النية ولا تنسَ السحور. 🤍"))
                     mark("fast_eve")
 
                 # prayer-time reminders
@@ -360,14 +417,16 @@ def scheduler_loop():
                 if t:
                     for name, hhmm in t.items():
                         if due("salah_" + name, hhmm, now):
-                            send(f"🕌 *It's time for {name}* ({fmt12(hhmm)})\n\nHayya 'ala-s-salah. Leave what you're doing and pray. 🤍")
+                            send(L(f"🕌 *It's time for {name}* ({fmt12(hhmm)})\n\nHayya 'ala-s-salah. Leave what you're doing and pray. 🤍",
+                                   f"🕌 *حان وقت صلاة {PRAYER_AR.get(name, name)}* ({fmt12(hhmm)})\n\nحيّ على الصلاة. اترك ما بيدك وصلِّ. 🤍"))
                             mark("salah_" + name)
                     # Friday: dua reminder in the last hour before Maghrib
                     if wd == 4 and t.get("Maghrib"):
                         mh, mm = map(int, t["Maghrib"].split(":"))
                         last = (datetime.datetime.now().replace(hour=mh, minute=mm) - datetime.timedelta(minutes=60)).strftime("%H:%M")
                         if due("friday_dua", last, now):
-                            send("⏳ *The last hour before Maghrib (Friday)*\n\nThis is a time when no Muslim asks Allah for good except that He grants it. (Bukhari)\n\nRaise your hands and make du'a. 🤲")
+                            send(L("⏳ *The last hour before Maghrib (Friday)*\n\nThis is a time when no Muslim asks Allah for good except that He grants it. (Bukhari)\n\nRaise your hands and make du'a. 🤲",
+                                   "⏳ *الساعة الأخيرة قبل المغرب (الجمعة)*\n\nساعة لا يسأل الله فيها مسلمٌ خيرًا إلا أعطاه إياه. (البخاري)\n\nارفع يديك وادعُ. 🤲"))
                             mark("friday_dua")
         except Exception as e:
             print("Scheduler error:", e)
@@ -376,20 +435,34 @@ def scheduler_loop():
 # ----------------------------------------------------------------------------
 # Command handling (long polling)
 # ----------------------------------------------------------------------------
-HELP = (
-    "*Sunnah Companion* 🤍\n\n"
-    "/city <City, Country> — set location\n"
-    "/times — today's prayer times\n"
-    "/today — Sunnah checklist\n"
-    "/hadith — a hadith from Nawawi's Forty\n"
-    "/friday — the Jumu'ah Sunnah acts\n"
-    "/fasting — recommended fasting days now\n"
-    "/dua — a prophetic supplication\n"
-    "/tip — a Sunnah tip\n"
-    "/stop — pause reminders\n"
-    "/resume — resume reminders\n"
-    "/help — this message"
-)
+def help_text():
+    return L(
+        "*Sunnah Companion* 🤍\n\n"
+        "/city <City, Country> — set location\n"
+        "/times — today's prayer times\n"
+        "/today — Sunnah checklist\n"
+        "/hadith — a hadith from Nawawi's Forty\n"
+        "/friday — the Jumu'ah Sunnah acts\n"
+        "/fasting — recommended fasting days now\n"
+        "/dua — a prophetic supplication\n"
+        "/tip — a Sunnah tip\n"
+        "/language — العربية / English\n"
+        "/stop — pause reminders\n"
+        "/resume — resume reminders\n"
+        "/help — this message",
+        "*رفيق السنة* 🤍\n\n"
+        "/city <City, Country> — تحديد المدينة\n"
+        "/times — أوقات الصلاة اليوم\n"
+        "/today — قائمة السنن\n"
+        "/hadith — حديث من الأربعين النووية\n"
+        "/friday — سنن يوم الجمعة\n"
+        "/fasting — أيام الصيام المستحبة الآن\n"
+        "/dua — دعاء نبوي\n"
+        "/tip — سنّة مختصرة\n"
+        "/language — العربية / English\n"
+        "/stop — إيقاف التذكيرات\n"
+        "/resume — استئناف التذكيرات\n"
+        "/help — هذه القائمة")
 
 def handle(text, chat_id):
     text = (text or "").strip()
@@ -398,13 +471,26 @@ def handle(text, chat_id):
     if low.startswith("/start"):
         state["chat_id"] = chat_id
         save_json(STATE_PATH, state)
-        send("Assalamu alaikum 🤍\n\nYou're registered for Sunnah reminders. "
-             "Set your city for prayer times, e.g.\n`/city Cairo, Egypt`\n\n" + HELP, chat_id)
+        send(L("Assalamu alaikum 🤍\n\nYou're registered for Sunnah reminders. "
+               "Set your city for prayer times, e.g.\n`/city Cairo, Egypt`\n\n",
+               "السلام عليكم 🤍\n\nتم تسجيلك لتذكيرات السنة. "
+               "حدد مدينتك لأوقات الصلاة، مثال:\n`/city Cairo, Egypt`\n\n") + help_text(), chat_id)
+
+    elif low.startswith("/language") or low.startswith("/lang") or low.startswith("/arabic") or low.startswith("/english") or low.startswith("/عربي") or low.startswith("/العربية"):
+        arg = low.replace("/language", "").replace("/lang", "").strip()
+        if "ar" in arg or "عرب" in arg or low.startswith("/arabic") or low.startswith("/عربي") or low.startswith("/العربية"):
+            state["lang"] = "ar"
+        elif "en" in arg or low.startswith("/english"):
+            state["lang"] = "en"
+        else:
+            state["lang"] = "ar" if state.get("lang") == "en" else "en"  # toggle
+        save_json(STATE_PATH, state)
+        send(L("✅ Language set to English.", "✅ تم ضبط اللغة على العربية.") + "\n\n" + help_text(), chat_id)
 
     elif low.startswith("/city"):
         rest = text[5:].strip().lstrip(":").strip()
         if not rest:
-            return send("Send it like: `/city Cairo, Egypt`", chat_id)
+            return send(L("Send it like: `/city Cairo, Egypt`", "أرسلها هكذا: `/city Cairo, Egypt`"), chat_id)
         if "," in rest:
             city, country = [x.strip() for x in rest.split(",", 1)]
         else:
@@ -414,60 +500,74 @@ def handle(text, chat_id):
         save_json(STATE_PATH, state)
         t = fetch_prayers()
         if t:
-            send(f"📍 Location set to *{city}*.\n\n" + times_message(), chat_id)
+            send(L(f"📍 Location set to *{city}*.\n\n", f"📍 تم تحديد الموقع: *{city}*.\n\n") + times_message(), chat_id)
         else:
-            send(f"📍 Saved *{city}*, but I couldn't load prayer times. Check the spelling, e.g. `/city Cairo, Egypt`.", chat_id)
+            send(L(f"📍 Saved *{city}*, but I couldn't load prayer times. Check the spelling, e.g. `/city Cairo, Egypt`.",
+                   f"📍 حُفظت *{city}*، لكن تعذّر تحميل أوقات الصلاة. تحقق من الكتابة، مثال: `/city Cairo, Egypt`."), chat_id)
 
     elif low.startswith("/times"):
         send(times_message(), chat_id)
 
     elif low.startswith("/today"):
-        send(CHECKLIST, chat_id)
+        send(checklist(), chat_id)
 
     elif low.startswith("/hadith"):
-        n, txt, ref = random.choice(HADITHS)
-        send(f"📖 *Hadith* (Nawawi #{n})\n\n“{txt}”\n\n_— {ref}_", chat_id)
+        n, en, ar, ref = random.choice(HADITHS)
+        send(L(f"📖 *Hadith* (Nawawi #{n})\n\n“{en}”\n\n_— {ref}_",
+               f"📖 *حديث* (النووي #{n})\n\n«{ar}»\n\n_— {ref}_"), chat_id)
 
     elif low.startswith("/friday") or low.startswith("/jumuah") or low.startswith("/jumah"):
-        send("🕌 *Jumu'ah Sunnah acts*\n\n"
-             "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
-             "🚿 *Ghusl* and wear your best clothes; use perfume.\n"
-             "⏱️ Go *early* to the masjid.\n"
-             "🤲 Abundant *salawat* on the Prophet ﷺ. (Abu Dawud)\n"
-             "⏳ The *last hour before Maghrib* — a time du'a is answered. (Bukhari)", chat_id)
+        send(L("🕌 *Jumu'ah Sunnah acts*\n\n"
+               "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
+               "🚿 *Ghusl* and wear your best clothes; use perfume.\n"
+               "⏱️ Go *early* to the masjid.\n"
+               "🤲 Abundant *salawat* on the Prophet ﷺ. (Abu Dawud)\n"
+               "⏳ The *last hour before Maghrib* — a time du'a is answered. (Bukhari)",
+               "🕌 *سنن يوم الجمعة*\n\n"
+               "📖 اقرأ *سورة الكهف* — نور ما بين الجمعتين. (الحاكم)\n"
+               "🚿 *الغُسل* وأفضل الثياب والطيب.\n"
+               "⏱️ *التبكير* إلى المسجد.\n"
+               "🤲 الإكثار من *الصلاة على النبي ﷺ*. (أبو داود)\n"
+               "⏳ *الساعة الأخيرة قبل المغرب* — ساعة يُستجاب فيها الدعاء. (البخاري)"), chat_id)
 
-    elif low.startswith("/fasting") or low.startswith("/fast") and not low.startswith("/faste"):
+    elif low.startswith("/fasting") or (low.startswith("/fast") and not low.startswith("/faste")):
         hij = state.get("hijri") or {}
-        lines = ["🍽️ *Recommended fasting*\n",
-                 "• *Mondays & Thursdays* — the Prophet ﷺ fasted them. (Tirmidhi)",
-                 "• The *3 White Days* — 13th, 14th, 15th of each Hijri month. (Bukhari)"]
+        lines = L(["🍽️ *Recommended fasting*\n",
+                   "• *Mondays & Thursdays* — the Prophet ﷺ fasted them. (Tirmidhi)",
+                   "• The *3 White Days* — 13th, 14th, 15th of each Hijri month. (Bukhari)"],
+                  ["🍽️ *الصيام المستحب*\n",
+                   "• *الإثنين والخميس* — كان النبي ﷺ يصومهما. (الترمذي)",
+                   "• *الأيام البيض* — ١٣ و١٤ و١٥ من كل شهر هجري. (البخاري)"])
+        lines = list(lines)
         if hij.get("day"):
-            lines.append(f"\n_Today is {hij['day']} {hij.get('monthName','')} {hij.get('year','')} AH._")
+            lines.append(L(f"\n_Today is {hij['day']} {hij.get('monthName','')} {hij.get('year','')} AH._",
+                           f"\n_اليوم {hij['day']} {hij.get('monthName','')} {hij.get('year','')}هـ._"))
             occ = fasting_special(hij["day"], hij["month"])
             if occ:
-                lines.append("👉 Today is " + "; ".join(occ))
+                lines.append(L("👉 Today is " + "; ".join(occ), "👉 اليوم " + "؛ ".join(occ)))
         send("\n".join(lines), chat_id)
 
     elif low.startswith("/dua"):
         d = random.choice(DUAS)
-        send(f"🤲 *{d[0]}*\n\n{d[1]}\n_{d[2]}_", chat_id)
+        send(L(f"🤲 *{d[0]}*\n\n{d[1]}\n_{d[2]}_", f"🤲 *{d[3]}*\n\n{d[1]}"), chat_id)
 
     elif low.startswith("/tip"):
-        send("🌿 " + random.choice(TIPS), chat_id)
+        tp = random.choice(TIPS)
+        send("🌿 " + L(tp[0], tp[1]), chat_id)
 
     elif low.startswith("/stop"):
         state["paused"] = True; save_json(STATE_PATH, state)
-        send("Reminders paused. Send /resume anytime.", chat_id)
+        send(L("Reminders paused. Send /resume anytime.", "تم إيقاف التذكيرات. أرسل /resume في أي وقت."), chat_id)
 
     elif low.startswith("/resume"):
         state["paused"] = False; save_json(STATE_PATH, state)
-        send("Reminders resumed. 🤍", chat_id)
+        send(L("Reminders resumed. 🤍", "تم استئناف التذكيرات. 🤍"), chat_id)
 
     elif low.startswith("/help"):
-        send(HELP, chat_id)
+        send(help_text(), chat_id)
 
     else:
-        send("I didn't recognise that. Send /help for commands.", chat_id)
+        send(L("I didn't recognise that. Send /help for commands.", "لم أفهم ذلك. أرسل /help لعرض الأوامر."), chat_id)
 
 def polling_loop():
     print("Listening for Telegram commands…")

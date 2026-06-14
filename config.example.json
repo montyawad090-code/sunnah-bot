@@ -3,6 +3,7 @@
   "chat_id": null,
   "city": "",
   "country": "",
+  "lang": "en",
   "morning_time": "07:00",
   "evening_time": "17:30",
   "daily_tip_time": "09:00",

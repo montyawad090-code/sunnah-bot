@@ -17,6 +17,8 @@ services:
         value: "Bristol"
       - key: COUNTRY
         value: "United Kingdom"
+      - key: LANG
+        value: "en"
       - key: MORNING_TIME
         value: "07:00"
       - key: EVENING_TIME
