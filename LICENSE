@@ -1,0 +1,45 @@
+Copyright (c) 2026 Ayman Ahmed. All rights reserved.
+
+This source code is published publicly so that it can be read and evaluated —
+for example by employers, collaborators, or anyone curious about how the
+project works. Publishing it does not place it in the public domain and does
+not grant a licence to reuse it.
+
+YOU MAY:
+
+  - View, read, and study this source code.
+  - Reference it when evaluating the author's work.
+  - Quote short excerpts, with attribution, for discussion or review.
+
+YOU MAY NOT, without prior written permission from the copyright holder:
+
+  - Copy, reproduce, or redistribute this source code, in whole or in part.
+  - Modify it or create derivative works from it.
+  - Incorporate it, in whole or in part, into any other project, product or
+    service, whether commercial or non-commercial.
+  - Sublicense, sell, or otherwise transfer rights to it.
+
+Requests for permission are welcome. Contact the copyright holder.
+
+RELIGIOUS CONTENT
+
+The supplications, hadith and reminders included in this project are
+well-known texts of the Islamic tradition and are not claimed as the original
+work of the author. Their selection, arrangement and the surrounding software
+are. This project is a reminder tool and is not a substitute for scholarly
+knowledge.
+
+THIRD-PARTY SERVICES
+
+This project calls external services, including the Aladhan prayer times API
+and the Telegram Bot API. Those services are governed by their own terms and
+licences, not by this one.
+
+NO WARRANTY
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THIS SOFTWARE OR ITS USE.

@@ -75,3 +75,15 @@ The bot only sends reminders while the script is running. Options:
   (calculation method 2 = ISNA; change `&method=` in the code for another method).
 - The reminders are aids to worship — always learn the details of each act of the
   Sunnah from the Qur'an, authentic hadith, and trustworthy scholars.
+
+## Licence
+
+Copyright © 2026 Ayman Ahmed. All rights reserved.
+
+This code is public so it can be **read and evaluated**, not reused. You're
+welcome to look through it and to quote it with attribution; copying, modifying,
+redistributing or building on it needs written permission. See [LICENSE](LICENSE).
+
+The supplications and hadith are well-known texts of the Islamic tradition and
+are not claimed as original work — the selection, arrangement and surrounding
+software are.
