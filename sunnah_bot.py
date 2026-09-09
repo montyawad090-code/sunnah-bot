@@ -478,110 +478,138 @@ def help_text():
         "/resume — استئناف التذكيرات\n"
         "/help — هذه القائمة")
 
+def cmd_start(text, low, chat_id):
+    state["chat_id"] = chat_id
+    save_json(STATE_PATH, state)
+    send(L("Assalamu alaikum 🤍\n\nYou're registered for Sunnah reminders. "
+           "Set your city for prayer times, e.g.\n`/city Cairo, Egypt`\n\n",
+           "السلام عليكم 🤍\n\nتم تسجيلك لتذكيرات السنة. "
+           "حدد مدينتك لأوقات الصلاة، مثال:\n`/city Cairo, Egypt`\n\n") + help_text(), chat_id)
+
+def cmd_language(text, low, chat_id):
+    arg = low.replace("/language", "").replace("/lang", "").strip()
+    if "ar" in arg or "عرب" in arg or low.startswith("/arabic") or low.startswith("/عربي") or low.startswith("/العربية"):
+        state["lang"] = "ar"
+    elif "en" in arg or low.startswith("/english"):
+        state["lang"] = "en"
+    else:
+        state["lang"] = "ar" if state.get("lang") == "en" else "en"  # toggle
+    save_json(STATE_PATH, state)
+    send(L("✅ Language set to English.", "✅ تم ضبط اللغة على العربية.") + "\n\n" + help_text(), chat_id)
+
+def cmd_city(text, low, chat_id):
+    rest = text[5:].strip().lstrip(":").strip()
+    if not rest:
+        return send(L("Send it like: `/city Cairo, Egypt`", "أرسلها هكذا: `/city Cairo, Egypt`"), chat_id)
+    if "," in rest:
+        city, country = [x.strip() for x in rest.split(",", 1)]
+    else:
+        city, country = rest, ""
+    state["city"], state["country"] = city, country
+    state["prayers"] = None
+    save_json(STATE_PATH, state)
+    t = fetch_prayers()
+    if t:
+        send(L(f"📍 Location set to *{city}*.\n\n", f"📍 تم تحديد الموقع: *{city}*.\n\n") + times_message(), chat_id)
+    else:
+        send(L(f"📍 Saved *{city}*, but I couldn't load prayer times. Check the spelling, e.g. `/city Cairo, Egypt`.",
+               f"📍 حُفظت *{city}*، لكن تعذّر تحميل أوقات الصلاة. تحقق من الكتابة، مثال: `/city Cairo, Egypt`."), chat_id)
+
+def cmd_times(text, low, chat_id):
+    send(times_message(), chat_id)
+
+def cmd_today(text, low, chat_id):
+    send(checklist(), chat_id)
+
+def cmd_hadith(text, low, chat_id):
+    n, en, ar, ref = random.choice(HADITHS)
+    send(L(f"📖 *Hadith* (Nawawi #{n})\n\n“{en}”\n\n_— {ref}_",
+           f"📖 *حديث* (النووي #{n})\n\n«{ar}»\n\n_— {ref}_"), chat_id)
+
+def cmd_friday(text, low, chat_id):
+    send(L("🕌 *Jumu'ah Sunnah acts*\n\n"
+           "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
+           "🚿 *Ghusl* and wear your best clothes; use perfume.\n"
+           "⏱️ Go *early* to the masjid.\n"
+           "🤲 Abundant *salawat* on the Prophet ﷺ. (Abu Dawud)\n"
+           "⏳ The *last hour before Maghrib* — a time du'a is answered. (Bukhari)",
+           "🕌 *سنن يوم الجمعة*\n\n"
+           "📖 اقرأ *سورة الكهف* — نور ما بين الجمعتين. (الحاكم)\n"
+           "🚿 *الغُسل* وأفضل الثياب والطيب.\n"
+           "⏱️ *التبكير* إلى المسجد.\n"
+           "🤲 الإكثار من *الصلاة على النبي ﷺ*. (أبو داود)\n"
+           "⏳ *الساعة الأخيرة قبل المغرب* — ساعة يُستجاب فيها الدعاء. (البخاري)"), chat_id)
+
+def cmd_fasting(text, low, chat_id):
+    hij = state.get("hijri") or {}
+    lines = L(["🍽️ *Recommended fasting*\n",
+               "• *Mondays & Thursdays* — the Prophet ﷺ fasted them. (Tirmidhi)",
+               "• The *3 White Days* — 13th, 14th, 15th of each Hijri month. (Bukhari)"],
+              ["🍽️ *الصيام المستحب*\n",
+               "• *الإثنين والخميس* — كان النبي ﷺ يصومهما. (الترمذي)",
+               "• *الأيام البيض* — ١٣ و١٤ و١٥ من كل شهر هجري. (البخاري)"])
+    lines = list(lines)
+    if hij.get("day"):
+        lines.append(L(f"\n_Today is {hij['day']} {hij.get('monthName','')} {hij.get('year','')} AH._",
+                       f"\n_اليوم {hij['day']} {hij.get('monthName','')} {hij.get('year','')}هـ._"))
+        occ = fasting_special(hij["day"], hij["month"])
+        if occ:
+            lines.append(L("👉 Today is " + "; ".join(occ), "👉 اليوم " + "؛ ".join(occ)))
+    send("\n".join(lines), chat_id)
+
+def cmd_dua(text, low, chat_id):
+    d = random.choice(DUAS)
+    send(L(f"🤲 *{d[0]}*\n\n{d[1]}\n_{d[2]}_", f"🤲 *{d[3]}*\n\n{d[1]}"), chat_id)
+
+def cmd_tip(text, low, chat_id):
+    tp = random.choice(TIPS)
+    send("🌿 " + L(tp[0], tp[1]), chat_id)
+
+def cmd_stop(text, low, chat_id):
+    state["paused"] = True; save_json(STATE_PATH, state)
+    send(L("Reminders paused. Send /resume anytime.", "تم إيقاف التذكيرات. أرسل /resume في أي وقت."), chat_id)
+
+def cmd_resume(text, low, chat_id):
+    state["paused"] = False; save_json(STATE_PATH, state)
+    send(L("Reminders resumed. 🤍", "تم استئناف التذكيرات. 🤍"), chat_id)
+
+def cmd_help(text, low, chat_id):
+    send(help_text(), chat_id)
+
+
+def cmd_unknown(text, low, chat_id):
+    send(L("I didn't recognise that. Send /help for commands.", "لم أفهم ذلك. أرسل /help لعرض الأوامر."), chat_id)
+
+# Ordered dispatch table: (matcher, handler). First match wins, so the order
+# here reproduces the old if/elif chain exactly (prefix match, not equality).
+# handle() calls the handler indirectly through this list, which is also why it
+# is no longer a "god node" in the call graph — each command owns its own edges.
+def _starts(*prefixes):
+    return lambda low: any(low.startswith(p) for p in prefixes)
+
+COMMANDS = [
+    (_starts("/start"), cmd_start),
+    (_starts("/language", "/lang", "/arabic", "/english", "/عربي", "/العربية"), cmd_language),
+    (_starts("/city"), cmd_city),
+    (_starts("/times"), cmd_times),
+    (_starts("/today"), cmd_today),
+    (_starts("/hadith"), cmd_hadith),
+    (_starts("/friday", "/jumuah", "/jumah"), cmd_friday),
+    (lambda low: low.startswith("/fasting") or (low.startswith("/fast") and not low.startswith("/faste")), cmd_fasting),
+    (_starts("/dua"), cmd_dua),
+    (_starts("/tip"), cmd_tip),
+    (_starts("/stop"), cmd_stop),
+    (_starts("/resume"), cmd_resume),
+    (_starts("/help"), cmd_help),
+]
+
 def handle(text, chat_id):
     text = (text or "").strip()
     low = text.lower()
-
-    if low.startswith("/start"):
-        state["chat_id"] = chat_id
-        save_json(STATE_PATH, state)
-        send(L("Assalamu alaikum 🤍\n\nYou're registered for Sunnah reminders. "
-               "Set your city for prayer times, e.g.\n`/city Cairo, Egypt`\n\n",
-               "السلام عليكم 🤍\n\nتم تسجيلك لتذكيرات السنة. "
-               "حدد مدينتك لأوقات الصلاة، مثال:\n`/city Cairo, Egypt`\n\n") + help_text(), chat_id)
-
-    elif low.startswith("/language") or low.startswith("/lang") or low.startswith("/arabic") or low.startswith("/english") or low.startswith("/عربي") or low.startswith("/العربية"):
-        arg = low.replace("/language", "").replace("/lang", "").strip()
-        if "ar" in arg or "عرب" in arg or low.startswith("/arabic") or low.startswith("/عربي") or low.startswith("/العربية"):
-            state["lang"] = "ar"
-        elif "en" in arg or low.startswith("/english"):
-            state["lang"] = "en"
-        else:
-            state["lang"] = "ar" if state.get("lang") == "en" else "en"  # toggle
-        save_json(STATE_PATH, state)
-        send(L("✅ Language set to English.", "✅ تم ضبط اللغة على العربية.") + "\n\n" + help_text(), chat_id)
-
-    elif low.startswith("/city"):
-        rest = text[5:].strip().lstrip(":").strip()
-        if not rest:
-            return send(L("Send it like: `/city Cairo, Egypt`", "أرسلها هكذا: `/city Cairo, Egypt`"), chat_id)
-        if "," in rest:
-            city, country = [x.strip() for x in rest.split(",", 1)]
-        else:
-            city, country = rest, ""
-        state["city"], state["country"] = city, country
-        state["prayers"] = None
-        save_json(STATE_PATH, state)
-        t = fetch_prayers()
-        if t:
-            send(L(f"📍 Location set to *{city}*.\n\n", f"📍 تم تحديد الموقع: *{city}*.\n\n") + times_message(), chat_id)
-        else:
-            send(L(f"📍 Saved *{city}*, but I couldn't load prayer times. Check the spelling, e.g. `/city Cairo, Egypt`.",
-                   f"📍 حُفظت *{city}*، لكن تعذّر تحميل أوقات الصلاة. تحقق من الكتابة، مثال: `/city Cairo, Egypt`."), chat_id)
-
-    elif low.startswith("/times"):
-        send(times_message(), chat_id)
-
-    elif low.startswith("/today"):
-        send(checklist(), chat_id)
-
-    elif low.startswith("/hadith"):
-        n, en, ar, ref = random.choice(HADITHS)
-        send(L(f"📖 *Hadith* (Nawawi #{n})\n\n“{en}”\n\n_— {ref}_",
-               f"📖 *حديث* (النووي #{n})\n\n«{ar}»\n\n_— {ref}_"), chat_id)
-
-    elif low.startswith("/friday") or low.startswith("/jumuah") or low.startswith("/jumah"):
-        send(L("🕌 *Jumu'ah Sunnah acts*\n\n"
-               "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
-               "🚿 *Ghusl* and wear your best clothes; use perfume.\n"
-               "⏱️ Go *early* to the masjid.\n"
-               "🤲 Abundant *salawat* on the Prophet ﷺ. (Abu Dawud)\n"
-               "⏳ The *last hour before Maghrib* — a time du'a is answered. (Bukhari)",
-               "🕌 *سنن يوم الجمعة*\n\n"
-               "📖 اقرأ *سورة الكهف* — نور ما بين الجمعتين. (الحاكم)\n"
-               "🚿 *الغُسل* وأفضل الثياب والطيب.\n"
-               "⏱️ *التبكير* إلى المسجد.\n"
-               "🤲 الإكثار من *الصلاة على النبي ﷺ*. (أبو داود)\n"
-               "⏳ *الساعة الأخيرة قبل المغرب* — ساعة يُستجاب فيها الدعاء. (البخاري)"), chat_id)
-
-    elif low.startswith("/fasting") or (low.startswith("/fast") and not low.startswith("/faste")):
-        hij = state.get("hijri") or {}
-        lines = L(["🍽️ *Recommended fasting*\n",
-                   "• *Mondays & Thursdays* — the Prophet ﷺ fasted them. (Tirmidhi)",
-                   "• The *3 White Days* — 13th, 14th, 15th of each Hijri month. (Bukhari)"],
-                  ["🍽️ *الصيام المستحب*\n",
-                   "• *الإثنين والخميس* — كان النبي ﷺ يصومهما. (الترمذي)",
-                   "• *الأيام البيض* — ١٣ و١٤ و١٥ من كل شهر هجري. (البخاري)"])
-        lines = list(lines)
-        if hij.get("day"):
-            lines.append(L(f"\n_Today is {hij['day']} {hij.get('monthName','')} {hij.get('year','')} AH._",
-                           f"\n_اليوم {hij['day']} {hij.get('monthName','')} {hij.get('year','')}هـ._"))
-            occ = fasting_special(hij["day"], hij["month"])
-            if occ:
-                lines.append(L("👉 Today is " + "; ".join(occ), "👉 اليوم " + "؛ ".join(occ)))
-        send("\n".join(lines), chat_id)
-
-    elif low.startswith("/dua"):
-        d = random.choice(DUAS)
-        send(L(f"🤲 *{d[0]}*\n\n{d[1]}\n_{d[2]}_", f"🤲 *{d[3]}*\n\n{d[1]}"), chat_id)
-
-    elif low.startswith("/tip"):
-        tp = random.choice(TIPS)
-        send("🌿 " + L(tp[0], tp[1]), chat_id)
-
-    elif low.startswith("/stop"):
-        state["paused"] = True; save_json(STATE_PATH, state)
-        send(L("Reminders paused. Send /resume anytime.", "تم إيقاف التذكيرات. أرسل /resume في أي وقت."), chat_id)
-
-    elif low.startswith("/resume"):
-        state["paused"] = False; save_json(STATE_PATH, state)
-        send(L("Reminders resumed. 🤍", "تم استئناف التذكيرات. 🤍"), chat_id)
-
-    elif low.startswith("/help"):
-        send(help_text(), chat_id)
-
-    else:
-        send(L("I didn't recognise that. Send /help for commands.", "لم أفهم ذلك. أرسل /help لعرض الأوامر."), chat_id)
+    for matches, fn in COMMANDS:
+        if matches(low):
+            return fn(text, low, chat_id)
+    return cmd_unknown(text, low, chat_id)
 
 def polling_loop():
     print("Listening for Telegram commands…")
