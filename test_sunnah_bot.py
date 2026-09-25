@@ -316,6 +316,21 @@ class TestFetchPrayers(BotTestBase):
             self.assertEqual(bot.ensure_prayers()["Isha"], "19:00")
         self.assertEqual(get.call_count, 1)
 
+    def test_cached_place_still_sets_timezone(self):
+        self.u["tz"] = "Asia/Tokyo"
+        with mock.patch.object(bot.requests, "get") as get:
+            get.return_value.json.return_value = self.PAYLOAD
+            bot.ensure_prayers()
+        cached_day = datetime.date.fromisoformat(next(iter(bot.PRAYER_CACHE))[-1])
+        # Someone who just moved here from London; Tokyo is already cached.
+        traveller = bot.use(bot.new_user(2))
+        traveller.update({"city": "Tokyo", "country": "Japan", "tz": "Europe/London"})
+        with mock.patch.object(bot.requests, "get") as get, \
+                mock.patch.object(bot, "today_local", return_value=cached_day):
+            bot.ensure_prayers()
+        get.assert_not_called()
+        self.assertEqual(traveller["tz"], "Asia/Tokyo")
+
     def test_malformed_times_are_rejected(self):
         bad = {"code": 200, "data": dict(self.PAYLOAD["data"], timings={"Fajr": "5:3x"})}
         with mock.patch.object(bot.requests, "get") as get:

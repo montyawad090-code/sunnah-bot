@@ -583,18 +583,13 @@ def fetch_prayers():
                 pass
             meta = data.get("meta") or {}
             PRAYER_CACHE[skey + (day.isoformat(),)] = {
-                "times": times, "hijri": hijri,
+                "times": times, "hijri": hijri, "tz": meta.get("timezone"),
                 "method": str((meta.get("method") or {}).get("name", ""))}
             # Drop entries from before yesterday so the cache can't grow forever.
             old = (day - datetime.timedelta(days=1)).isoformat()
             for k in [k for k in PRAYER_CACHE if k[-1] < old]:
                 del PRAYER_CACHE[k]
-            tz = meta.get("timezone")
-            if tz and not state.get("tz_fixed") and tz != state.get("tz"):
-                # If the user's date differs from the date we asked for,
-                # ensure_prayers() notices on its next call and refetches.
-                state["tz"] = tz
-                save()
+            sync_tz(meta.get("timezone"))
             _fetch_fail.pop(skey, None)
             return apply_offsets(times)
         print("Prayer fetch failed: unexpected response")
@@ -604,11 +599,20 @@ def fetch_prayers():
     _fetch_fail[skey] = time.time()
     return None
 
+def sync_tz(tz):
+    """Adopt the location's timezone. If that changes the user's date,
+    ensure_prayers() notices on its next call and fetches the right day."""
+    if tz and not state.get("tz_fixed") and tz != state.get("tz"):
+        state["tz"] = tz
+        save()
+
 def ensure_prayers(force=False):
     if not has_location():
         return None
     entry = prayer_entry()
     if entry:
+        # Someone else may have fetched this place first; still take its timezone.
+        sync_tz(entry.get("tz"))
         return apply_offsets(entry["times"])
     # Checked every 30s; don't hammer the API after a failure.
     if not force and time.time() - _fetch_fail.get(settings_key(), 0) < FETCH_RETRY_SECONDS:
