@@ -10,6 +10,7 @@ stub out `send`, `save_json`, and `fetch_prayers` so nothing leaves the process.
 
 Run:  python test_sunnah_bot.py       (or: python -m unittest -v)
 """
+import datetime
 import os
 import unittest
 
@@ -184,6 +185,112 @@ class TestHandleContentCommands(BotTestBase):
         # handle() must pass the caller's chat_id through to send().
         bot.handle("/help", 9999)
         self.assertEqual(self.last_chat(), 9999)
+
+
+class TestOwnerAndParsing(BotTestBase):
+    def test_other_chat_cannot_take_over(self):
+        bot.state["chat_id"] = 111
+        bot.handle("/start", 222)
+        self.assertEqual(bot.state["chat_id"], 111)
+        self.assertIn("private", self.last().lower())
+
+    def test_other_chat_cannot_pause(self):
+        bot.state["chat_id"] = 111
+        bot.state["paused"] = False
+        bot.handle("/stop", 222)
+        self.assertFalse(bot.state["paused"])
+
+    def test_other_chat_can_read_content(self):
+        bot.state["chat_id"] = 111
+        bot.handle("/today", 222)
+        self.assertIn("Salah", self.last())
+
+    def test_owner_matches_string_chat_id(self):
+        bot.state["chat_id"] = "111"  # CHAT_ID env values may be strings
+        bot.handle("/stop", 111)
+        self.assertTrue(bot.state["paused"])
+
+    def test_bot_username_suffix_is_ignored(self):
+        bot.state["chat_id"] = None
+        prev = bot.state.get("city")
+        bot.handle("/city@SunnahBot", 1)
+        self.assertEqual(bot.state.get("city"), prev)
+        self.assertIn("Cairo, Egypt", self.last())
+
+    def test_non_text_message_is_ignored(self):
+        bot.handle("", 1)
+        bot.handle(None, 1)
+        self.assertEqual(self.sent, [])
+
+
+class TestTimezone(BotTestBase):
+    def test_now_local_uses_city_timezone(self):
+        bot.state["tz"] = "Asia/Tokyo"
+        self.assertEqual(bot.now_local().utcoffset(), datetime.timedelta(hours=9))
+
+    def test_bad_timezone_falls_back(self):
+        bot.state["tz"] = "Not/AZone"
+        self.assertIsNotNone(bot.now_local())
+
+    def test_stale_hijri_is_ignored(self):
+        bot.state["tz"] = None
+        bot.state["hijri"] = {"day": 13, "month": 3, "date": "2000-01-01"}
+        self.assertEqual(bot.hijri_today(), {})
+        bot.state["hijri"]["date"] = datetime.date.today().isoformat()
+        self.assertEqual(bot.hijri_today()["day"], 13)
+
+
+class TestScheduler(BotTestBase):
+    def setUp(self):
+        super().setUp()
+        bot.state.update({"chat_id": 1, "paused": False, "tz": None,
+                          "sent_date": "", "sent_today": [], "hijri": {}})
+        self.today = datetime.date.today()
+        bot.state["prayers"] = {"date": self.today.isoformat(),
+                                "times": {"Fajr": "05:00", "Dhuhr": "12:00", "Asr": "15:30",
+                                          "Maghrib": "18:00", "Isha": "19:30"}}
+
+    def at(self, hhmm):
+        h, m = map(int, hhmm.split(":"))
+        return datetime.datetime.combine(self.today, datetime.time(h, m, 30))
+
+    def test_prayer_reminder_fires_once(self):
+        bot.scheduler_tick(self.at("12:00"))
+        self.assertIn("Dhuhr", self.last())
+        n = len(self.sent)
+        bot.scheduler_tick(self.at("12:01"))
+        self.assertEqual(len(self.sent), n)
+
+    def test_nothing_sent_when_paused(self):
+        bot.state["paused"] = True
+        bot.scheduler_tick(self.at("12:00"))
+        self.assertEqual(self.sent, [])
+
+    def test_white_day_occasion(self):
+        bot.state["hijri"] = {"day": 13, "month": 3, "date": self.today.isoformat()}
+        bot.scheduler_tick(self.at(bot.HADITH_TIME))
+        self.assertTrue(any("White Day" in t for t, _ in self.sent))
+
+
+class TestSend(unittest.TestCase):
+    def test_markdown_error_resends_as_plain_text(self):
+        calls = []
+
+        def fake_api(method, **params):
+            calls.append(params)
+            if "parse_mode" in params:
+                return {"ok": False, "error_code": 400,
+                        "description": "Bad Request: can't parse entities"}
+            return {"ok": True}
+
+        orig = bot.api
+        bot.api = fake_api
+        try:
+            bot.send("city_with_underscore", chat_id=5)
+        finally:
+            bot.api = orig
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("parse_mode", calls[1])
 
 
 if __name__ == "__main__":

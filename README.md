@@ -16,10 +16,10 @@ prayer times, morning & evening adhkar, and a daily Sunnah tip.
    - (Optional) set `"city"` and `"country"` now, or do it later with `/city`.
 
 3. **Run it**
-   - **Windows:** double-click **`run-bot.bat`** (it installs `requests` and starts the bot).
+   - **Windows:** double-click **`run-bot.bat`** (it installs the requirements and starts the bot).
    - **Or any OS:**
      ```
-     pip install requests
+     pip install -r requirements.txt
      python sunnah_bot.py
      ```
 
@@ -71,6 +71,13 @@ The bot only sends reminders while the script is running. Options:
 ## Notes
 
 - `config.json` and `state.json` hold your token and chat id — **don't share them.**
+- The bot is **private**: the first chat to press START (or the `CHAT_ID` env var)
+  owns it. Anyone else can read content commands but can't change your city,
+  language, or pause your reminders.
+- Reminders use **your city's local time**, detected automatically from the
+  prayer-times API — so a cloud host running on UTC still reminds you on time.
+  To force a zone, set `TIMEZONE` (e.g. `Europe/London`) or `"timezone"` in `config.json`.
+- Run the tests with `python test_sunnah_bot.py`.
 - Prayer times come from the free [Aladhan API](https://aladhan.com/prayer-times-api)
   (calculation method 2 = ISNA; change `&method=` in the code for another method).
 - The reminders are aids to worship — always learn the details of each act of the
