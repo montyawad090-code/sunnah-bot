@@ -119,6 +119,38 @@ HADITHS = [
     ("20", "Richness is not having many possessions; rather, true richness is the richness of the soul.", "ليس الغنى عن كثرة العَرَض، ولكن الغنى غنى النفس.", "Bukhari & Muslim"),
 ]
 
+# Aladhan calculation methods (https://aladhan.com/calculation-methods).
+METHODS = {
+    1: "University of Islamic Sciences, Karachi", 2: "ISNA (North America)",
+    3: "Muslim World League", 4: "Umm al-Qura, Makkah", 5: "Egyptian General Authority of Survey",
+    7: "University of Tehran", 8: "Gulf Region", 9: "Kuwait", 10: "Qatar",
+    11: "Majlis Ugama Islam Singapura", 12: "Union des Organisations Islamiques de France",
+    13: "Diyanet, Turkey", 14: "Spiritual Administration of Muslims of Russia",
+    15: "Moonsighting Committee Worldwide", 16: "Dubai", 17: "JAKIM, Malaysia",
+    18: "Tunisia", 19: "Algeria", 20: "KEMENAG, Indonesia", 21: "Morocco",
+    22: "Comunidade Islamica de Lisboa", 23: "Ministry of Awqaf, Jordan",
+}
+
+# The authority most mosques in each country follow. Countries not listed are
+# left to Aladhan, which picks the closest authority to the location.
+_COUNTRY_METHOD = {
+    15: ["united kingdom", "uk", "england", "scotland", "wales", "northern ireland", "great britain", "britain", "ireland"],
+    2: ["united states", "united states of america", "usa", "us", "america", "canada"],
+    5: ["egypt", "sudan", "libya", "syria", "lebanon", "iraq", "palestine"],
+    4: ["saudi arabia", "ksa", "yemen"],
+    16: ["united arab emirates", "uae"],
+    10: ["qatar"], 9: ["kuwait"], 8: ["bahrain", "oman"],
+    1: ["pakistan", "india", "bangladesh", "afghanistan"],
+    13: ["turkey", "türkiye", "turkiye"], 7: ["iran"], 17: ["malaysia"], 20: ["indonesia"],
+    11: ["singapore"], 12: ["france"], 14: ["russia"], 18: ["tunisia"], 19: ["algeria"],
+    21: ["morocco"], 22: ["portugal"], 23: ["jordan"],
+}
+METHOD_BY_COUNTRY = {c: m for m, cs in _COUNTRY_METHOD.items() for c in cs}
+# Where the Hanafi Asr (shadow = twice the object's length) is the local norm.
+HANAFI_COUNTRIES = {"pakistan", "india", "bangladesh", "afghanistan", "turkey", "türkiye", "turkiye"}
+
+PRAYERS = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+
 PRAYER_AR = {"Fajr": "الفجر", "Sunrise": "الشروق", "Dhuhr": "الظهر",
              "Asr": "العصر", "Maghrib": "المغرب", "Isha": "العشاء"}
 
@@ -276,6 +308,22 @@ state.setdefault("sent_today", [])         # keys of reminders already sent toda
 state.setdefault("sent_date", "")
 state.setdefault("lang", cfg("LANG", "lang", "en"))   # "en" or "ar"
 
+# Prayer-time accuracy settings. Coordinates (shared from the phone, or
+# LATITUDE/LONGITUDE) beat a city name; method/school None = pick by country.
+state.setdefault("lat", None)
+state.setdefault("lng", None)
+state.setdefault("method", None)
+state.setdefault("school", None)          # 0 = Shafi'i/standard Asr, 1 = Hanafi
+state.setdefault("offsets", {})           # {"Fajr": 2, ...} minutes, to match your mosque
+_lat, _lng = cfg("LATITUDE", "latitude"), cfg("LONGITUDE", "longitude")
+if _lat not in (None, "") and _lng not in (None, ""):
+    state["lat"], state["lng"] = float(_lat), float(_lng)
+if cfg("PRAYER_METHOD", "prayer_method") not in (None, ""):
+    state["method"] = int(cfg("PRAYER_METHOD", "prayer_method"))
+_asr = str(cfg("ASR_SCHOOL", "asr_school", "") or "").lower()
+if _asr:
+    state["school"] = 1 if _asr in ("1", "hanafi") else 0
+
 # Prayer times are in the city's local time, but a cloud host's clock is
 # usually UTC. The city's timezone is detected from the prayer-times API and
 # stored in state["tz"]; TIMEZONE (e.g. "Europe/London") forces it instead.
@@ -326,17 +374,17 @@ def md(text):
     """Escape user-supplied text for Telegram's (legacy) Markdown."""
     return "".join("\\" + c if c in "_*`[" else c for c in str(text))
 
-def send(text, chat_id=None):
+def send(text, chat_id=None, **extra):
     """Send a message; returns True if Telegram accepted it."""
     cid = chat_id or state.get("chat_id")
     if not cid:
         return False
     res = api("sendMessage", chat_id=cid, text=text, parse_mode="Markdown",
-              disable_web_page_preview=True)
+              disable_web_page_preview=True, **extra)
     # Telegram rejects the whole message if the Markdown doesn't parse (e.g. a
     # city name with an underscore). Resend it as plain text rather than lose it.
     if res.get("error_code") == 400 and "parse" in str(res.get("description", "")).lower():
-        res = api("sendMessage", chat_id=cid, text=text, disable_web_page_preview=True)
+        res = api("sendMessage", chat_id=cid, text=text, disable_web_page_preview=True, **extra)
     if res and not res.get("ok"):
         print("Send failed:", res.get("description"))
     return bool(res.get("ok"))
@@ -347,22 +395,58 @@ def send(text, chat_id=None):
 FETCH_RETRY_SECONDS = 600
 _last_fetch_fail = 0.0
 
+def has_location():
+    return state.get("lat") is not None or bool(state.get("city"))
+
+def calc_settings():
+    """(method, school) to use: the user's choice, else the local norm."""
+    country = (state.get("country") or "").strip().lower()
+    method = state.get("method") or METHOD_BY_COUNTRY.get(country)
+    school = state.get("school")
+    if school is None:
+        school = 1 if country in HANAFI_COUNTRIES else 0
+    return method, school
+
+def prayer_request(day):
+    """Aladhan URL and query params for `day` at the user's location."""
+    dmy = day.strftime("%d-%m-%Y")
+    if state.get("lat") is not None:
+        url = "https://api.aladhan.com/v1/timings/" + dmy
+        params = {"latitude": state["lat"], "longitude": state["lng"]}
+    else:
+        url = "https://api.aladhan.com/v1/timingsByCity/" + dmy
+        params = {"city": state["city"], "country": state.get("country", "")}
+    method, school = calc_settings()
+    if method:
+        params["method"] = method
+    params["school"] = school
+    return url, params
+
+def apply_offsets(times):
+    """Shift each prayer by the user's minute adjustments (to match a mosque)."""
+    out = {}
+    for name, hhmm in times.items():
+        off = int((state.get("offsets") or {}).get(name, 0))
+        if off:
+            h, m = map(int, hhmm.split(":"))
+            total = (h * 60 + m + off) % (24 * 60)
+            hhmm = f"{total // 60:02d}:{total % 60:02d}"
+        out[name] = hhmm
+    return out
+
 def fetch_prayers():
     global _last_fetch_fail
-    if not state.get("city"):
+    if not has_location():
         return None
     today = today_local()
-    dmy = today.strftime("%d-%m-%Y")
-    url = ("https://api.aladhan.com/v1/timingsByCity/" + dmy +
-           "?city=" + requests.utils.quote(state["city"]) +
-           "&country=" + requests.utils.quote(state.get("country", "")) +
-           "&method=2")
+    url, params = prayer_request(today)
     try:
-        j = requests.get(url, timeout=30).json()
+        j = requests.get(url, params=params, timeout=30).json()
         if j.get("code") == 200:
             t = j["data"]["timings"]
-            times = {k: t[k][:5] for k in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]}
-            state["prayers"] = {"date": today.isoformat(), "times": times}
+            times = {k: t[k][:5] for k in PRAYERS}
+            meth = ((j["data"].get("meta") or {}).get("method") or {}).get("name", "")
+            state["prayers"] = {"date": today.isoformat(), "times": times, "method": meth}
             # capture the Hijri date for fasting / occasion reminders
             try:
                 h = j["data"]["date"]["hijri"]
@@ -378,7 +462,7 @@ def fetch_prayers():
                 state["tz"] = tzname
             save_json(STATE_PATH, state)
             _last_fetch_fail = 0.0
-            return times
+            return apply_offsets(times)
         print("Prayer fetch failed:", j.get("data"))
     except Exception as e:
         print("Prayer fetch error:", e)
@@ -392,7 +476,7 @@ def ensure_prayers():
         if time.time() - _last_fetch_fail < FETCH_RETRY_SECONDS:
             return None
         return fetch_prayers()
-    return p["times"]
+    return apply_offsets(p["times"])
 
 def hijri_today():
     """Today's Hijri date, or {} if the cached one is from another day."""
@@ -405,15 +489,27 @@ def fmt12(hhmm):
     h = h % 12 or 12
     return f"{h}:{m:02d} {ap}"
 
+def place_name():
+    if state.get("lat") is not None:
+        return L("your location", "موقعك")
+    return md(state.get("city", ""))
+
 def times_message():
-    if not state.get("city"):
-        return L("Set your city first, e.g. `/city Cairo, Egypt`", "حدد مدينتك أولًا، مثال: `/city Cairo, Egypt`")
+    if not has_location():
+        return L("Set your location first: /location (most accurate) or `/city Cairo, Egypt`",
+                 "حدد موقعك أولًا: /location (الأدق) أو `/city Cairo, Egypt`")
     t = ensure_prayers()
     if not t:
         return L("Couldn't load prayer times right now. Please try again in a few minutes.",
                  "تعذّر تحميل أوقات الصلاة الآن. حاول مرة أخرى بعد دقائق.")
     lines = "\n".join(L(f"  *{n}* — {fmt12(v)}", f"  *{PRAYER_AR.get(n, n)}* — {fmt12(v)}") for n, v in t.items())
-    return L(f"🕌 *Prayer times — {md(state['city'])}*\n{lines}", f"🕌 *أوقات الصلاة — {md(state['city'])}*\n{lines}")
+    _, school = calc_settings()
+    meth = md((state.get("prayers") or {}).get("method") or "")
+    asr = L("Hanafi", "حنفي") if school == 1 else L("standard", "الجمهور")
+    note = L(f"\n\n_Method: {meth} · Asr: {asr}_", f"\n\n_طريقة الحساب: {meth} · العصر: {asr}_") if meth else ""
+    if state.get("offsets"):
+        note += L("\n_Adjusted to your mosque (/adjust)_", "\n_معدّلة حسب مسجدك (/adjust)_")
+    return L(f"🕌 *Prayer times — {place_name()}*\n{lines}", f"🕌 *أوقات الصلاة — {place_name()}*\n{lines}") + note
 
 # ----------------------------------------------------------------------------
 # Reminder scheduling loop
@@ -539,8 +635,12 @@ def scheduler_loop():
 def help_text():
     return L(
         "*Sunnah Companion* 🤍\n\n"
-        "/city <City, Country> — set location\n"
+        "/location — share your location (most accurate times)\n"
+        "/city <City, Country> — set location by name\n"
         "/times — today's prayer times\n"
+        "/method — calculation method\n"
+        "/asr — standard or Hanafi Asr\n"
+        "/adjust — match your mosque's timetable\n"
         "/today — Sunnah checklist\n"
         "/hadith — a hadith from Nawawi's Forty\n"
         "/friday — the Jumu'ah Sunnah acts\n"
@@ -552,8 +652,12 @@ def help_text():
         "/resume — resume reminders\n"
         "/help — this message",
         "*رفيق السنة* 🤍\n\n"
-        "/city <City, Country> — تحديد المدينة\n"
+        "/location — مشاركة موقعك (أدق الأوقات)\n"
+        "/city <City, Country> — تحديد المدينة بالاسم\n"
         "/times — أوقات الصلاة اليوم\n"
+        "/method — طريقة الحساب\n"
+        "/asr — العصر: الجمهور أو الحنفية\n"
+        "/adjust — مطابقة جدول مسجدك\n"
         "/today — قائمة السنن\n"
         "/hadith — حديث من الأربعين النووية\n"
         "/friday — سنن يوم الجمعة\n"
@@ -569,9 +673,11 @@ def cmd_start(text, low, chat_id):
     state["chat_id"] = chat_id
     save_json(STATE_PATH, state)
     send(L("Assalamu alaikum 🤍\n\nYou're registered for Sunnah reminders. "
-           "Set your city for prayer times, e.g.\n`/city Cairo, Egypt`\n\n",
+           "For the most accurate prayer times, share your location with /location "
+           "(or type your city, e.g. `/city Cairo, Egypt`).\n\n",
            "السلام عليكم 🤍\n\nتم تسجيلك لتذكيرات السنة. "
-           "حدد مدينتك لأوقات الصلاة، مثال:\n`/city Cairo, Egypt`\n\n") + help_text(), chat_id)
+           "لأدق أوقات الصلاة شارك موقعك عبر /location "
+           "(أو اكتب مدينتك، مثال: `/city Cairo, Egypt`).\n\n") + help_text(), chat_id)
 
 def cmd_language(text, low, chat_id):
     arg = low.replace("/language", "").replace("/lang", "").strip()
@@ -593,6 +699,7 @@ def cmd_city(text, low, chat_id):
     else:
         city, country = rest, ""
     state["city"], state["country"] = city, country
+    state["lat"] = state["lng"] = None      # a typed city replaces a shared location
     state["prayers"] = None
     save_json(STATE_PATH, state)
     t = fetch_prayers()
@@ -601,6 +708,73 @@ def cmd_city(text, low, chat_id):
     else:
         send(L(f"📍 Saved *{md(city)}*, but I couldn't load prayer times. Check the spelling, e.g. `/city Cairo, Egypt`.",
                f"📍 حُفظت *{md(city)}*، لكن تعذّر تحميل أوقات الصلاة. تحقق من الكتابة، مثال: `/city Cairo, Egypt`."), chat_id)
+
+def refresh_times_reply(chat_id, header):
+    state["prayers"] = None
+    save_json(STATE_PATH, state)
+    fetch_prayers()
+    send(header + "\n\n" + times_message(), chat_id, reply_markup={"remove_keyboard": True})
+
+def cmd_location(text, low, chat_id):
+    send(L("📍 Tap the button below to share your location. Prayer times will be "
+           "calculated for your exact position — more accurate than a city name.\n\n"
+           "_Share it again whenever you travel._",
+           "📍 اضغط الزر بالأسفل لمشاركة موقعك، لتُحسب أوقات الصلاة لموقعك بالضبط — "
+           "وهذا أدق من اسم المدينة.\n\n_أعد المشاركة كلما سافرت._"), chat_id,
+         reply_markup={"keyboard": [[{"text": L("📍 Send my location", "📍 أرسل موقعي"),
+                                      "request_location": True}]],
+                       "one_time_keyboard": True, "resize_keyboard": True})
+
+def handle_location(loc, chat_id):
+    """A location shared from the phone (the most accurate way to set it)."""
+    if not is_owner(chat_id):
+        return send(L("This is a private Sunnah Companion bot — it's already registered to someone else.",
+                      "هذا بوت خاص — وهو مسجّل لشخص آخر بالفعل."), chat_id)
+    state["lat"], state["lng"] = round(float(loc["latitude"]), 4), round(float(loc["longitude"]), 4)
+    refresh_times_reply(chat_id, L("📍 Got your location.", "📍 تم استلام موقعك."))
+
+def cmd_method(text, low, chat_id):
+    arg = low.split(maxsplit=1)[1].strip() if " " in low else ""
+    if arg.isdigit() and (int(arg) == 0 or int(arg) in METHODS):
+        state["method"] = int(arg) or None
+        method, _ = calc_settings()
+        name = METHODS.get(method, L("closest authority to you", "أقرب هيئة لموقعك"))
+        return refresh_times_reply(chat_id, L(f"✅ Calculation method: *{name}*", f"✅ طريقة الحساب: *{name}*"))
+    method, _ = calc_settings()
+    current = METHODS.get(method, L("auto (closest authority)", "تلقائي (أقرب هيئة)"))
+    listing = "\n".join(f"`{k}` — {v}" for k, v in METHODS.items())
+    send(L(f"🧭 *Calculation method* — now: *{current}*\n\nPick the one your local mosque uses, e.g. `/method 15`. "
+           f"`/method 0` = automatic for your country.\n\n{listing}",
+           f"🧭 *طريقة الحساب* — الحالية: *{current}*\n\nاختر ما يعتمده مسجدك، مثال: `/method 15`. "
+           f"`/method 0` = تلقائي حسب بلدك.\n\n{listing}"), chat_id)
+
+def cmd_asr(text, low, chat_id):
+    if "hanaf" in low or "حنف" in low:
+        state["school"] = 1
+    elif "shaf" in low or "standard" in low or "شاف" in low or "جمهور" in low:
+        state["school"] = 0
+    else:
+        return send(L("Choose how Asr is calculated:\n`/asr standard` — Shafi'i, Maliki, Hanbali (shadow = object)\n"
+                      "`/asr hanafi` — Hanafi (shadow = 2× object, later)",
+                      "اختر طريقة حساب العصر:\n`/asr standard` — الجمهور (ظل الشيء مثله)\n"
+                      "`/asr hanafi` — الحنفية (ظل الشيء مثليه، وقت متأخر)"), chat_id)
+    refresh_times_reply(chat_id, L("✅ Asr updated.", "✅ تم تحديث وقت العصر."))
+
+def cmd_adjust(text, low, chat_id):
+    parts = low.split()
+    if len(parts) == 2 and parts[1] == "reset":
+        state["offsets"] = {}
+        return refresh_times_reply(chat_id, L("✅ Adjustments cleared.", "✅ تم حذف التعديلات."))
+    names = {p.lower(): p for p in PRAYERS}
+    if len(parts) == 3 and parts[1] in names and parts[2].lstrip("+-").isdigit() and abs(int(parts[2])) <= 60:
+        offs = dict(state.get("offsets") or {})
+        offs[names[parts[1]]] = int(parts[2])
+        state["offsets"] = {k: v for k, v in offs.items() if v}
+        return refresh_times_reply(chat_id, L("✅ Adjusted.", "✅ تم التعديل."))
+    send(L("Match your mosque's timetable by shifting a prayer (±60 min):\n"
+           "`/adjust maghrib +3`\n`/adjust fajr -2`\n`/adjust reset`",
+           "طابق جدول مسجدك بتعديل صلاة (±٦٠ دقيقة):\n"
+           "`/adjust maghrib +3`\n`/adjust fajr -2`\n`/adjust reset`"), chat_id)
 
 def cmd_times(text, low, chat_id):
     send(times_message(), chat_id)
@@ -681,6 +855,10 @@ COMMANDS = [
     (_starts("/start"), cmd_start, True),
     (_starts("/language", "/lang", "/arabic", "/english", "/عربي", "/العربية"), cmd_language, True),
     (_starts("/city"), cmd_city, True),
+    (_starts("/location"), cmd_location, True),
+    (_starts("/method"), cmd_method, True),
+    (_starts("/asr", "/madhab"), cmd_asr, True),
+    (_starts("/adjust"), cmd_adjust, True),
     (_starts("/times"), cmd_times, False),
     (_starts("/today"), cmd_today, False),
     (_starts("/hadith"), cmd_hadith, False),
@@ -730,7 +908,9 @@ def polling_loop():
                 with STATE_LOCK:
                     state["last_update_id"] = upd["update_id"]
                     msg = upd.get("message") or upd.get("edited_message")
-                    if msg:
+                    if msg and msg.get("location"):
+                        handle_location(msg["location"], msg["chat"]["id"])
+                    elif msg:
                         handle(msg.get("text", ""), msg["chat"]["id"])
             if updates:  # an empty long-poll changes nothing worth writing
                 save_json(STATE_PATH, state)

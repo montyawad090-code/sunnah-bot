@@ -35,7 +35,7 @@ class BotTestBase(unittest.TestCase):
 
         self.sent = []  # list of (text, chat_id)
         # Like the real send(), report success so the scheduler marks reminders sent.
-        bot.send = lambda text, chat_id=None: self.sent.append((text, chat_id)) or True
+        bot.send = lambda text, chat_id=None, **kw: self.sent.append((text, chat_id)) or True
         bot.save_json = lambda *a, **k: None  # never touch state.json on disk
         bot.fetch_prayers = lambda *a, **k: None  # never hit the Aladhan API
 
@@ -305,6 +305,76 @@ class TestFetchPrayers(BotTestBase):
         self.assertEqual(times["Fajr"], "05:00")
         self.assertEqual(bot.state["tz"], "Asia/Tokyo")
         self.assertEqual(bot.state["hijri"]["day"], 13)
+
+
+class TestPrayerAccuracy(BotTestBase):
+    def setUp(self):
+        super().setUp()
+        bot.state.update({"chat_id": None, "lat": None, "lng": None, "method": None,
+                          "school": None, "offsets": {}, "city": "Bristol",
+                          "country": "United Kingdom"})
+        self.day = datetime.date(2026, 9, 25)
+
+    def test_uk_city_uses_moonsighting_committee(self):
+        url, params = bot.prayer_request(self.day)
+        self.assertIn("timingsByCity/25-09-2026", url)
+        self.assertEqual(params["method"], 15)
+        self.assertEqual(params["school"], 0)
+
+    def test_pakistan_defaults_to_karachi_and_hanafi(self):
+        bot.state["country"] = "Pakistan"
+        _, params = bot.prayer_request(self.day)
+        self.assertEqual((params["method"], params["school"]), (1, 1))
+
+    def test_unknown_country_lets_aladhan_pick(self):
+        bot.state["country"] = "Atlantis"
+        _, params = bot.prayer_request(self.day)
+        self.assertNotIn("method", params)
+
+    def test_coordinates_beat_city(self):
+        bot.state.update({"lat": 51.4545, "lng": -2.5879})
+        url, params = bot.prayer_request(self.day)
+        self.assertIn("/timings/25-09-2026", url)
+        self.assertEqual((params["latitude"], params["longitude"]), (51.4545, -2.5879))
+
+    def test_shared_location_is_saved(self):
+        bot.handle_location({"latitude": 51.45451, "longitude": -2.58791}, 7)
+        self.assertEqual((bot.state["lat"], bot.state["lng"]), (51.4545, -2.5879))
+
+    def test_stranger_cannot_share_location(self):
+        bot.state["chat_id"] = 111
+        bot.handle_location({"latitude": 1.0, "longitude": 2.0}, 222)
+        self.assertIsNone(bot.state["lat"])
+
+    def test_city_clears_shared_location(self):
+        bot.state.update({"lat": 1.0, "lng": 2.0})
+        bot.handle("/city Cairo, Egypt", 1)
+        self.assertIsNone(bot.state["lat"])
+        _, params = bot.prayer_request(self.day)
+        self.assertEqual(params["method"], 5)
+
+    def test_method_override(self):
+        bot.handle("/method 3", 1)
+        self.assertEqual(bot.prayer_request(self.day)[1]["method"], 3)
+        bot.handle("/method 0", 1)
+        self.assertEqual(bot.prayer_request(self.day)[1]["method"], 15)
+
+    def test_asr_hanafi(self):
+        bot.handle("/asr hanafi", 1)
+        self.assertEqual(bot.prayer_request(self.day)[1]["school"], 1)
+
+    def test_adjust_shifts_times(self):
+        bot.handle("/adjust maghrib +3", 1)
+        bot.handle("/adjust Fajr -2", 1)
+        adj = bot.apply_offsets({"Fajr": "05:00", "Maghrib": "18:59", "Isha": "20:00"})
+        self.assertEqual(adj, {"Fajr": "04:58", "Maghrib": "19:02", "Isha": "20:00"})
+        bot.handle("/adjust reset", 1)
+        self.assertEqual(bot.state["offsets"], {})
+
+    def test_adjust_rejects_nonsense(self):
+        bot.handle("/adjust lunch 5", 1)
+        bot.handle("/adjust fajr 500", 1)
+        self.assertEqual(bot.state["offsets"], {})
 
 
 class TestSend(unittest.TestCase):

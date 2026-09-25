@@ -25,7 +25,8 @@ prayer times, morning & evening adhkar, and a daily Sunnah tip.
 
 4. **Activate reminders**
    - Open your new bot in Telegram and press **START**.
-   - Send your city: `/city Cairo, Egypt`
+   - Send `/location` and tap **📍 Send my location** (most accurate), or type your
+     city: `/city Cairo, Egypt`
    - Done — you'll now get reminders. Test with `/times`, `/today`, `/dua`.
 
 ## Commands
@@ -33,8 +34,12 @@ prayer times, morning & evening adhkar, and a daily Sunnah tip.
 | Command | What it does |
 |---|---|
 | `/start` | Register your phone for reminders |
-| `/city <City, Country>` | Set location for prayer times |
-| `/times` | Today's prayer times |
+| `/location` | Share your phone's location: the most accurate prayer times |
+| `/city <City, Country>` | Set location by name instead |
+| `/times` | Today's prayer times (shows the method used) |
+| `/method [n]` | See or choose the calculation method (`/method 0` = automatic) |
+| `/asr standard` / `/asr hanafi` | How Asr is calculated |
+| `/adjust <prayer> <±min>` | Match your mosque's timetable, e.g. `/adjust maghrib +3` |
 | `/today` | The full Sunnah checklist |
 | `/hadith` | A hadith from Nawawi's Forty |
 | `/friday` | The Jumu'ah Sunnah acts |
@@ -78,8 +83,17 @@ The bot only sends reminders while the script is running. Options:
   prayer-times API — so a cloud host running on UTC still reminds you on time.
   To force a zone, set `TIMEZONE` (e.g. `Europe/London`) or `"timezone"` in `config.json`.
 - Run the tests with `python test_sunnah_bot.py`.
-- Prayer times come from the free [Aladhan API](https://aladhan.com/prayer-times-api)
-  (calculation method 2 = ISNA; change `&method=` in the code for another method).
+- Prayer times come from the free [Aladhan API](https://aladhan.com/prayer-times-api).
+  **For the most accurate times:**
+  1. Share your location with `/location` (exact coordinates beat a city name).
+  2. The bot picks the authority your country's mosques follow (e.g. Moonsighting
+     Committee for the UK, Umm al-Qura for Saudi Arabia, Egyptian Authority for
+     Egypt, Karachi + Hanafi Asr for Pakistan/India). Change it with `/method`.
+  3. Choose `/asr hanafi` if you follow the Hanafi madhab.
+  4. Compare with your local mosque's timetable and fine-tune with `/adjust`
+     (mosques often add a few minutes, e.g. to Maghrib or Dhuhr).
+  On a host you can also set `LATITUDE`, `LONGITUDE`, `PRAYER_METHOD` and
+  `ASR_SCHOOL` (`standard` / `hanafi`) as environment variables.
 - The reminders are aids to worship — always learn the details of each act of the
   Sunnah from the Qur'an, authentic hadith, and trustworthy scholars.
 
