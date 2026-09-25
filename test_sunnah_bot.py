@@ -279,6 +279,34 @@ class TestScheduler(BotTestBase):
         self.assertTrue(any("White Day" in t for t, _ in self.sent))
 
 
+class TestMarkdownEscaping(BotTestBase):
+    def test_md_escapes_markdown_characters(self):
+        self.assertEqual(bot.md("St_Albans*[x]`"), "St\\_Albans\\*\\[x]\\`")
+
+    def test_city_reply_escapes_user_text(self):
+        bot.state["chat_id"] = None
+        bot.handle("/city Some_Town", 1)  # fetch stubbed to fail
+        self.assertIn("Some\\_Town", self.last())
+
+
+class TestFetchPrayers(BotTestBase):
+    def test_detects_city_timezone(self):
+        import unittest.mock as mock
+        payload = {"code": 200, "data": {
+            "timings": {"Fajr": "05:00 (JST)", "Dhuhr": "11:45", "Asr": "15:00",
+                        "Maghrib": "17:40", "Isha": "19:00"},
+            "date": {"hijri": {"day": "13", "month": {"number": 3, "en": "Rabi"}, "year": "1448"}},
+            "meta": {"timezone": "Asia/Tokyo"}}}
+        bot.fetch_prayers = self._orig_fetch
+        bot.state.update({"city": "Tokyo", "country": "Japan", "tz": None})
+        with mock.patch.object(bot.requests, "get") as get:
+            get.return_value.json.return_value = payload
+            times = bot.fetch_prayers()
+        self.assertEqual(times["Fajr"], "05:00")
+        self.assertEqual(bot.state["tz"], "Asia/Tokyo")
+        self.assertEqual(bot.state["hijri"]["day"], 13)
+
+
 class TestSend(unittest.TestCase):
     def test_markdown_error_resends_as_plain_text(self):
         calls = []

@@ -31,12 +31,8 @@ Commands inside Telegram:
 """
 
 import json, os, time, random, datetime, threading
+from zoneinfo import ZoneInfo
 import requests
-
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:  # Python < 3.9
-    ZoneInfo = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -286,8 +282,7 @@ state.setdefault("lang", cfg("LANG", "lang", "en"))   # "en" or "ar"
 TIMEZONE = cfg("TIMEZONE", "timezone")
 if TIMEZONE:
     try:
-        if ZoneInfo:
-            ZoneInfo(TIMEZONE)
+        ZoneInfo(TIMEZONE)
         state["tz"] = TIMEZONE
     except Exception:
         # A typo here would otherwise silently put every reminder on the
@@ -302,7 +297,7 @@ def L(en, ar):
 def now_local():
     """Current time in the user's city (falls back to the machine's clock)."""
     name = state.get("tz")
-    if name and ZoneInfo:
+    if name:
         try:
             return datetime.datetime.now(ZoneInfo(name))
         except Exception:
@@ -327,6 +322,10 @@ def api(method, **params):
         print("API error:", str(e).replace(TOKEN, "<token>"))
         return {}
 
+def md(text):
+    """Escape user-supplied text for Telegram's (legacy) Markdown."""
+    return "".join("\\" + c if c in "_*`[" else c for c in str(text))
+
 def send(text, chat_id=None):
     """Send a message; returns True if Telegram accepted it."""
     cid = chat_id or state.get("chat_id")
@@ -348,7 +347,7 @@ def send(text, chat_id=None):
 FETCH_RETRY_SECONDS = 600
 _last_fetch_fail = 0.0
 
-def fetch_prayers(_retry=True):
+def fetch_prayers():
     global _last_fetch_fail
     if not state.get("city"):
         return None
@@ -373,13 +372,10 @@ def fetch_prayers(_retry=True):
             except Exception:
                 pass
             tzname = (j["data"].get("meta") or {}).get("timezone")
-            if tzname and not TIMEZONE and tzname != state.get("tz"):
+            if tzname and not TIMEZONE:
+                # If the city's date differs from the date we asked for,
+                # ensure_prayers() notices on its next call and refetches.
                 state["tz"] = tzname
-                # First fetch for this city asked for the server's date; if the
-                # city's date is different, fetch again for the right day.
-                if _retry and today_local() != today:
-                    save_json(STATE_PATH, state)
-                    return fetch_prayers(_retry=False)
             save_json(STATE_PATH, state)
             _last_fetch_fail = 0.0
             return times
@@ -417,7 +413,7 @@ def times_message():
         return L("Couldn't load prayer times right now. Please try again in a few minutes.",
                  "تعذّر تحميل أوقات الصلاة الآن. حاول مرة أخرى بعد دقائق.")
     lines = "\n".join(L(f"  *{n}* — {fmt12(v)}", f"  *{PRAYER_AR.get(n, n)}* — {fmt12(v)}") for n, v in t.items())
-    return L(f"🕌 *Prayer times — {state['city']}*\n{lines}", f"🕌 *أوقات الصلاة — {state['city']}*\n{lines}")
+    return L(f"🕌 *Prayer times — {md(state['city'])}*\n{lines}", f"🕌 *أوقات الصلاة — {md(state['city'])}*\n{lines}")
 
 # ----------------------------------------------------------------------------
 # Reminder scheduling loop
@@ -442,6 +438,12 @@ def mark(key):
     state["sent_today"].append(key)
     save_json(STATE_PATH, state)
 
+def remind(key, text):
+    """Send a scheduled reminder; mark it done only once Telegram accepts it,
+    so a failed send is retried on the next tick. text=None: nothing to say today."""
+    if text is None or send(text):
+        mark(key)
+
 def scheduler_tick(now=None):
     """Send whatever reminders are due right now (called every 30s)."""
     if state.get("paused") or not state.get("chat_id"):
@@ -455,26 +457,22 @@ def scheduler_tick(now=None):
 
     if due("morning", MORNING, now):
         d = DUAS[0]
-        if send(L(f"🌅 *Morning adhkar time*\n\n{d[1]}\n_{d[2]}_\n\nSay it 3× and start your day with Allah's remembrance.",
-                  f"🌅 *وقت أذكار الصباح*\n\n{d[1]}\n\nقُلها ٣ مرات وابدأ يومك بذكر الله.")):
-            mark("morning")
+        remind("morning", L(f"🌅 *Morning adhkar time*\n\n{d[1]}\n_{d[2]}_\n\nSay it 3× and start your day with Allah's remembrance.",
+                            f"🌅 *وقت أذكار الصباح*\n\n{d[1]}\n\nقُلها ٣ مرات وابدأ يومك بذكر الله."))
 
     if due("tip", TIP_TIME, now):
         tp = random.choice(TIPS)
-        if send(L("🌿 *Sunnah of the day*\n\n" + tp[0], "🌿 *سنّة اليوم*\n\n" + tp[1])):
-            mark("tip")
+        remind("tip", L("🌿 *Sunnah of the day*\n\n" + tp[0], "🌿 *سنّة اليوم*\n\n" + tp[1]))
 
     if due("evening", EVENING, now):
-        if send(L("🌇 *Evening adhkar time*\n\nأَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ\n_We have entered the evening and the dominion belongs to Allah._\n\nDon't forget to review your Sunnah list today.",
-                  "🌇 *وقت أذكار المساء*\n\nأَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ\n\nولا تنسَ مراجعة قائمة سننك اليوم.")):
-            mark("evening")
+        remind("evening", L("🌇 *Evening adhkar time*\n\nأَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ\n_We have entered the evening and the dominion belongs to Allah._\n\nDon't forget to review your Sunnah list today.",
+                            "🌇 *وقت أذكار المساء*\n\nأَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ\n\nولا تنسَ مراجعة قائمة سننك اليوم."))
 
     # hadith of the day (cycles through Nawawi's Forty)
     if due("hadith", HADITH_TIME, now):
         n, en, ar, ref = HADITHS[now.date().toordinal() % len(HADITHS)]
-        if send(L(f"📖 *Hadith of the day* (Nawawi #{n})\n\n“{en}”\n\n_— {ref}_",
-                  f"📖 *حديث اليوم* (النووي #{n})\n\n«{ar}»\n\n_— {ref}_")):
-            mark("hadith")
+        remind("hadith", L(f"📖 *Hadith of the day* (Nawawi #{n})\n\n“{en}”\n\n_— {ref}_",
+                           f"📖 *حديث اليوم* (النووي #{n})\n\n«{ar}»\n\n_— {ref}_"))
 
     wd = now.weekday()  # Mon=0 … Fri=4 … Sun=6
     hij = hijri_today()
@@ -483,23 +481,21 @@ def scheduler_tick(now=None):
     # today's fasting occasion (white days, Ashura, Arafah, Shawwal)
     if hd and due("occasion", HADITH_TIME, now):
         occ = fasting_special(hd, hm)
-        if not occ or send(L("🗓️ *Today* is " + "; ".join(occ) + "\n\nA blessed day to fast if you're able. 🤍",
-                             "🗓️ *اليوم* " + "؛ ".join(occ) + "\n\nيوم مبارك للصيام إن استطعت. 🤍")):
-            mark("occasion")
+        remind("occasion", L("🗓️ *Today* is " + "; ".join(occ) + "\n\nA blessed day to fast if you're able. 🤍",
+                             "🗓️ *اليوم* " + "؛ ".join(occ) + "\n\nيوم مبارك للصيام إن استطعت. 🤍") if occ else None)
 
     # Jumu'ah (Friday) pack
     if wd == 4 and due("jumuah", FRIDAY_TIME, now):
-        if send(L("🕌 *Jumu'ah Mubarak!* Today's Sunnah acts:\n\n"
-                   "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
-                   "🚿 *Ghusl* and wear your best clothes.\n"
-                   "🤲 Abundant *salawat* on the Prophet ﷺ — they are presented to him today. (Abu Dawud)\n"
-                   "⏳ Watch for the *last hour before Maghrib* — a time when dua is answered. (Bukhari)",
-                   "🕌 *جمعة مباركة!* من سنن اليوم:\n\n"
-                   "📖 اقرأ *سورة الكهف* — نور ما بين الجمعتين. (الحاكم)\n"
-                   "🚿 *الغُسل* وأفضل الثياب.\n"
-                   "🤲 الإكثار من *الصلاة على النبي ﷺ* — فهي معروضة عليه اليوم. (أبو داود)\n"
-                   "⏳ تحرَّ *الساعة الأخيرة قبل المغرب* — ساعة يُستجاب فيها الدعاء. (البخاري)")):
-            mark("jumuah")
+        remind("jumuah", L("🕌 *Jumu'ah Mubarak!* Today's Sunnah acts:\n\n"
+                           "📖 Read *Surah Al-Kahf* — light between the two Fridays. (al-Hakim)\n"
+                           "🚿 *Ghusl* and wear your best clothes.\n"
+                           "🤲 Abundant *salawat* on the Prophet ﷺ — they are presented to him today. (Abu Dawud)\n"
+                           "⏳ Watch for the *last hour before Maghrib* — a time when dua is answered. (Bukhari)",
+                           "🕌 *جمعة مباركة!* من سنن اليوم:\n\n"
+                           "📖 اقرأ *سورة الكهف* — نور ما بين الجمعتين. (الحاكم)\n"
+                           "🚿 *الغُسل* وأفضل الثياب.\n"
+                           "🤲 الإكثار من *الصلاة على النبي ﷺ* — فهي معروضة عليه اليوم. (أبو داود)\n"
+                           "⏳ تحرَّ *الساعة الأخيرة قبل المغرب* — ساعة يُستجاب فيها الدعاء. (البخاري)"))
 
     # evening nudge to plan fasting tomorrow (suhoor)
     if due("fast_eve", FAST_REMIND_TIME, now):
@@ -510,25 +506,22 @@ def scheduler_tick(now=None):
             eve.append(L("🌙 *Thursday* — a day the Prophet ﷺ fasted. (Tirmidhi)", "🌙 *الخميس* — يوم كان النبي ﷺ يصومه. (الترمذي)"))
         if hd:
             eve += fasting_special(hd + 1, hm)  # tomorrow's occasion
-        if not eve or send(L("🍽️ *Plan to fast tomorrow?*\n\nTomorrow is " + "; ".join(eve) + "\n\nMake the intention and remember suhoor. 🤍",
-                             "🍽️ *تنوي صيام الغد؟*\n\nالغد " + "؛ ".join(eve) + "\n\nاعقد النية ولا تنسَ السحور. 🤍")):
-            mark("fast_eve")
+        remind("fast_eve", L("🍽️ *Plan to fast tomorrow?*\n\nTomorrow is " + "; ".join(eve) + "\n\nMake the intention and remember suhoor. 🤍",
+                             "🍽️ *تنوي صيام الغد؟*\n\nالغد " + "؛ ".join(eve) + "\n\nاعقد النية ولا تنسَ السحور. 🤍") if eve else None)
 
     # prayer-time reminders
     if t:
         for name, hhmm in t.items():
             if due("salah_" + name, hhmm, now):
-                if send(L(f"🕌 *It's time for {name}* ({fmt12(hhmm)})\n\nHayya 'ala-s-salah. Leave what you're doing and pray. 🤍",
-                          f"🕌 *حان وقت صلاة {PRAYER_AR.get(name, name)}* ({fmt12(hhmm)})\n\nحيّ على الصلاة. اترك ما بيدك وصلِّ. 🤍")):
-                    mark("salah_" + name)
+                remind("salah_" + name, L(f"🕌 *It's time for {name}* ({fmt12(hhmm)})\n\nHayya 'ala-s-salah. Leave what you're doing and pray. 🤍",
+                                          f"🕌 *حان وقت صلاة {PRAYER_AR.get(name, name)}* ({fmt12(hhmm)})\n\nحيّ على الصلاة. اترك ما بيدك وصلِّ. 🤍"))
         # Friday: dua reminder in the last hour before Maghrib
         if wd == 4 and t.get("Maghrib"):
             mh, mm = map(int, t["Maghrib"].split(":"))
             last = (now.replace(hour=mh, minute=mm) - datetime.timedelta(minutes=60)).strftime("%H:%M")
             if due("friday_dua", last, now):
-                if send(L("⏳ *The last hour before Maghrib (Friday)*\n\nThis is a time when no Muslim asks Allah for good except that He grants it. (Bukhari)\n\nRaise your hands and make du'a. 🤲",
-                          "⏳ *الساعة الأخيرة قبل المغرب (الجمعة)*\n\nساعة لا يسأل الله فيها مسلمٌ خيرًا إلا أعطاه إياه. (البخاري)\n\nارفع يديك وادعُ. 🤲")):
-                    mark("friday_dua")
+                remind("friday_dua", L("⏳ *The last hour before Maghrib (Friday)*\n\nThis is a time when no Muslim asks Allah for good except that He grants it. (Bukhari)\n\nRaise your hands and make du'a. 🤲",
+                                       "⏳ *الساعة الأخيرة قبل المغرب (الجمعة)*\n\nساعة لا يسأل الله فيها مسلمٌ خيرًا إلا أعطاه إياه. (البخاري)\n\nارفع يديك وادعُ. 🤲"))
 
 def scheduler_loop():
     print("Reminder scheduler running…")
@@ -604,10 +597,10 @@ def cmd_city(text, low, chat_id):
     save_json(STATE_PATH, state)
     t = fetch_prayers()
     if t:
-        send(L(f"📍 Location set to *{city}*.\n\n", f"📍 تم تحديد الموقع: *{city}*.\n\n") + times_message(), chat_id)
+        send(L(f"📍 Location set to *{md(city)}*.\n\n", f"📍 تم تحديد الموقع: *{md(city)}*.\n\n") + times_message(), chat_id)
     else:
-        send(L(f"📍 Saved *{city}*, but I couldn't load prayer times. Check the spelling, e.g. `/city Cairo, Egypt`.",
-               f"📍 حُفظت *{city}*، لكن تعذّر تحميل أوقات الصلاة. تحقق من الكتابة، مثال: `/city Cairo, Egypt`."), chat_id)
+        send(L(f"📍 Saved *{md(city)}*, but I couldn't load prayer times. Check the spelling, e.g. `/city Cairo, Egypt`.",
+               f"📍 حُفظت *{md(city)}*، لكن تعذّر تحميل أوقات الصلاة. تحقق من الكتابة، مثال: `/city Cairo, Egypt`."), chat_id)
 
 def cmd_times(text, low, chat_id):
     send(times_message(), chat_id)
@@ -675,7 +668,9 @@ def cmd_help(text, low, chat_id):
 def cmd_unknown(text, low, chat_id):
     send(L("I didn't recognise that. Send /help for commands.", "لم أفهم ذلك. أرسل /help لعرض الأوامر."), chat_id)
 
-# Ordered dispatch table: (matcher, handler). First match wins, so the order
+# Ordered dispatch table: (matcher, handler, owner_only). owner_only commands
+# change the bot's settings: once it is registered to a chat, other chats can't
+# take it over or change it. First match wins, so the order
 # here reproduces the old if/elif chain exactly (prefix match, not equality).
 # handle() calls the handler indirectly through this list, which is also why it
 # is no longer a "god node" in the call graph — each command owns its own edges.
@@ -683,24 +678,20 @@ def _starts(*prefixes):
     return lambda low: any(low.startswith(p) for p in prefixes)
 
 COMMANDS = [
-    (_starts("/start"), cmd_start),
-    (_starts("/language", "/lang", "/arabic", "/english", "/عربي", "/العربية"), cmd_language),
-    (_starts("/city"), cmd_city),
-    (_starts("/times"), cmd_times),
-    (_starts("/today"), cmd_today),
-    (_starts("/hadith"), cmd_hadith),
-    (_starts("/friday", "/jumuah", "/jumah"), cmd_friday),
-    (lambda low: low.startswith("/fasting") or (low.startswith("/fast") and not low.startswith("/faste")), cmd_fasting),
-    (_starts("/dua"), cmd_dua),
-    (_starts("/tip"), cmd_tip),
-    (_starts("/stop"), cmd_stop),
-    (_starts("/resume"), cmd_resume),
-    (_starts("/help"), cmd_help),
+    (_starts("/start"), cmd_start, True),
+    (_starts("/language", "/lang", "/arabic", "/english", "/عربي", "/العربية"), cmd_language, True),
+    (_starts("/city"), cmd_city, True),
+    (_starts("/times"), cmd_times, False),
+    (_starts("/today"), cmd_today, False),
+    (_starts("/hadith"), cmd_hadith, False),
+    (_starts("/friday", "/jumuah", "/jumah"), cmd_friday, False),
+    (lambda low: low.startswith("/fasting") or (low.startswith("/fast") and not low.startswith("/faste")), cmd_fasting, False),
+    (_starts("/dua"), cmd_dua, False),
+    (_starts("/tip"), cmd_tip, False),
+    (_starts("/stop"), cmd_stop, True),
+    (_starts("/resume"), cmd_resume, True),
+    (_starts("/help"), cmd_help, False),
 ]
-
-# Commands that change the bot's settings. The bot serves one person, so once
-# it is registered to a chat, other chats can't take it over or change it.
-OWNER_ONLY = {cmd_start, cmd_language, cmd_city, cmd_stop, cmd_resume}
 
 def is_owner(chat_id):
     owner = state.get("chat_id")
@@ -715,9 +706,9 @@ def handle(text, chat_id):
     if head.startswith("/") and "@" in head:
         text = head.split("@", 1)[0] + sep + rest
     low = text.lower()
-    for matches, fn in COMMANDS:
+    for matches, fn, owner_only in COMMANDS:
         if matches(low):
-            if fn in OWNER_ONLY and not is_owner(chat_id):
+            if owner_only and not is_owner(chat_id):
                 return send(L("This is a private Sunnah Companion bot — it's already registered to someone else.",
                               "هذا بوت خاص — وهو مسجّل لشخص آخر بالفعل."), chat_id)
             return fn(text, low, chat_id)
@@ -787,9 +778,6 @@ def main():
         time.sleep(delay)
         delay = min(delay * 2, 300)
     print(f"Bot @{me['result']['username']} is live. Press Ctrl+C to stop.")
-    if state.get("chat_id"):
-        with STATE_LOCK:
-            ensure_prayers()
     threading.Thread(target=scheduler_loop, daemon=True).start()
     polling_loop()
 
