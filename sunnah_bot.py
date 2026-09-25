@@ -299,7 +299,13 @@ class PostgresStore:
     def __init__(self, url):
         import psycopg
         self.psycopg, self.url, self.conn = psycopg, url, None
-        self._run("CREATE TABLE IF NOT EXISTS sunnah_bot_state (id int PRIMARY KEY, data text NOT NULL)")
+        # Its own schema, not `public`: Supabase publishes `public` tables through
+        # its REST API, and this table holds users' locations. RLS with no
+        # policies also blocks API roles if the schema is ever exposed; the bot
+        # connects as the table owner, which RLS doesn't restrict.
+        self._run("CREATE SCHEMA IF NOT EXISTS sunnah_bot")
+        self._run("CREATE TABLE IF NOT EXISTS sunnah_bot.state (id int PRIMARY KEY, data text NOT NULL)")
+        self._run("ALTER TABLE sunnah_bot.state ENABLE ROW LEVEL SECURITY")
 
     def _run(self, sql, params=None):
         for attempt in (1, 2):   # reconnect once if the connection dropped
@@ -313,11 +319,11 @@ class PostgresStore:
                     raise
 
     def load(self):
-        row = self._run("SELECT data FROM sunnah_bot_state WHERE id = 1").fetchone()
+        row = self._run("SELECT data FROM sunnah_bot.state WHERE id = 1").fetchone()
         return json.loads(row[0]) if row else None
 
     def save(self, text):
-        self._run("INSERT INTO sunnah_bot_state (id, data) VALUES (1, %s) "
+        self._run("INSERT INTO sunnah_bot.state (id, data) VALUES (1, %s) "
                   "ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data", (text,))
 
 def open_store():
