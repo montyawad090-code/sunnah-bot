@@ -34,8 +34,10 @@ class BotTestBase(unittest.TestCase):
         self._orig_fetch = bot.fetch_prayers
 
         self.sent = []  # list of (text, chat_id)
-        bot.send = lambda text, chat_id=None: self.sent.append((text, chat_id))
+        # Like the real send(), report success so the scheduler marks reminders sent.
+        bot.send = lambda text, chat_id=None: self.sent.append((text, chat_id)) or True
         bot.save_json = lambda *a, **k: None  # never touch state.json on disk
+        bot.fetch_prayers = lambda *a, **k: None  # never hit the Aladhan API
 
         # Default language English unless a test overrides it.
         bot.state["lang"] = "en"
@@ -260,6 +262,11 @@ class TestScheduler(BotTestBase):
         n = len(self.sent)
         bot.scheduler_tick(self.at("12:01"))
         self.assertEqual(len(self.sent), n)
+
+    def test_failed_send_is_retried(self):
+        bot.send = lambda text, chat_id=None: False  # Telegram unreachable
+        bot.scheduler_tick(self.at("12:00"))
+        self.assertNotIn("salah_Dhuhr", bot.state["sent_today"])
 
     def test_nothing_sent_when_paused(self):
         bot.state["paused"] = True
