@@ -3,6 +3,10 @@
 Reliable push reminders that reach your phone **even when nothing is open**:
 prayer times, morning & evening adhkar, and a daily Sunnah tip.
 
+**Anyone can use it.** Share your bot's link (`t.me/<your_bot_username>`) —
+everyone who presses START gets their own location, language, calculation
+method and reminders, in their own time zone.
+
 ## One-time setup (about 5 minutes)
 
 1. **Create the bot**
@@ -13,7 +17,6 @@ prayer times, morning & evening adhkar, and a daily Sunnah tip.
 2. **Add the token**
    - In this `bot` folder, copy `config.example.json` to `config.json`.
    - Open `config.json` and paste your token into `"bot_token"`.
-   - (Optional) set `"city"` and `"country"` now, or do it later with `/city`.
 
 3. **Run it**
    - **Windows:** double-click **`run-bot.bat`** (it installs the requirements and starts the bot).
@@ -33,7 +36,7 @@ prayer times, morning & evening adhkar, and a daily Sunnah tip.
 
 | Command | What it does |
 |---|---|
-| `/start` | Register your phone for reminders |
+| `/start` | Sign up for reminders |
 | `/location` | Share your phone's location: the most accurate prayer times |
 | `/city <City, Country>` | Set location by name instead |
 | `/times` | Today's prayer times (shows the method used) |
@@ -48,6 +51,7 @@ prayer times, morning & evening adhkar, and a daily Sunnah tip.
 | `/tip` | A random Sunnah tip |
 | `/language` | Switch between العربية and English (or `/language ar`) |
 | `/stop` / `/resume` | Pause / resume reminders |
+| `/forget` | Delete your settings and location, and stop reminders |
 | `/help` | List commands |
 
 The bot speaks **Arabic or English** — every reminder, hadith, and command reply is
@@ -70,18 +74,31 @@ The bot only sends reminders while the script is running. Options:
   to Windows Startup so it launches with your computer:
   press `Win+R`, type `shell:startup`, drop a shortcut to `run-bot.bat` there.)
 - **A Raspberry Pi** at home — runs silently 24/7 for ~nothing.
-- **A free/cheap cloud host** (Railway, Render, Fly.io, a small VPS) — always on,
-  independent of your PC. Just run `python sunnah_bot.py` there with your `config.json`.
+- **A free/cheap cloud host** (Render, Railway, Fly.io, a small VPS) — always on,
+  independent of your PC. See [DEPLOY.md](DEPLOY.md).
+
+### Where users are saved
+
+Everyone's settings are saved in `state.json` next to the script (or in
+`DATA_DIR`). Many free cloud hosts, including Render, **wipe the disk on every
+deploy**, which would sign everyone out. On those hosts set `DATABASE_URL` to a
+free Postgres database (e.g. [Supabase](https://supabase.com) or
+[Neon](https://neon.tech)) and the bot keeps its data there instead.
 
 ## Notes
 
-- `config.json` and `state.json` hold your token and chat id — **don't share them.**
-- The bot is **private**: the first chat to press START (or the `CHAT_ID` env var)
-  owns it. Anyone else can read content commands but can't change your city,
-  language, or pause your reminders.
-- Reminders use **your city's local time**, detected automatically from the
-  prayer-times API — so a cloud host running on UTC still reminds you on time.
-  To force a zone, set `TIMEZONE` (e.g. `Europe/London`) or `"timezone"` in `config.json`.
+- `config.json` holds your bot token and `state.json` holds users' settings —
+  **don't share or commit them** (both are git-ignored).
+- **Privacy:** each person only ever sees their own settings. Shared locations
+  are stored rounded to about 1 km, nothing else about users is kept, and
+  `/forget` deletes a person's data. Logs never include users' cities, locations
+  or messages.
+- Reminders use **each person's local time**, detected automatically from the
+  prayer-times API — so a cloud host running on UTC still reminds everyone on time.
+- **Your own settings on a host (optional):** set `CHAT_ID` (your Telegram chat id)
+  plus any of `CITY`, `COUNTRY`, `LATITUDE`, `LONGITUDE`, `PRAYER_METHOD`,
+  `ASR_SCHOOL` (`standard` / `hanafi`) and `TIMEZONE`, and they're re-applied on
+  every start, even if the disk was wiped.
 - Run the tests with `python test_sunnah_bot.py`.
 - Prayer times come from the free [Aladhan API](https://aladhan.com/prayer-times-api).
   **For the most accurate times:**
@@ -92,8 +109,6 @@ The bot only sends reminders while the script is running. Options:
   3. Choose `/asr hanafi` if you follow the Hanafi madhab.
   4. Compare with your local mosque's timetable and fine-tune with `/adjust`
      (mosques often add a few minutes, e.g. to Maghrib or Dhuhr).
-  On a host you can also set `LATITUDE`, `LONGITUDE`, `PRAYER_METHOD` and
-  `ASR_SCHOOL` (`standard` / `hanafi`) as environment variables.
 - The reminders are aids to worship — always learn the details of each act of the
   Sunnah from the Qur'an, authentic hadith, and trustworthy scholars.
 

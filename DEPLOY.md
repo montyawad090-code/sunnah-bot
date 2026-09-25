@@ -4,22 +4,24 @@ This runs your Sunnah bot in the cloud so reminders arrive even when your PC is
 off. Recommended free path: **Render** (no credit card) + **UptimeRobot** (keeps
 the free instance awake). Takes ~15 minutes once.
 
-There are no secrets in the repo — your token and chat id are set as
+There are no secrets in the repo — your token and database address are set as
 **environment variables** on the host. `config.json` is git-ignored.
 
 ---
 
-## Step 0 — Get your CHAT_ID (one minute)
+## Step 0 — Create a free database (so users aren't lost)
 
-The cloud host needs to know which Telegram chat to message.
+Anyone can sign up to the bot, and their settings must survive restarts.
+Render's free disk is wiped on every deploy, so keep them in a free Postgres
+database instead:
 
-1. Make sure the bot is running locally (double-click `run-bot.bat`).
-2. In Telegram, open your bot, press **START**, send `/city Your City, Country`.
-3. Open `state.json` in this folder — copy the number next to `"chat_id"`.
-   (Or visit `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser
-   and copy `chat.id`.)
+1. Sign up at <https://supabase.com> (or <https://neon.tech>) — free, no card.
+2. Create a project, then copy its **connection string** (Supabase: *Connect* →
+   *Session pooler* URI; it looks like
+   `postgresql://postgres.xxxx:PASSWORD@aws-0-...pooler.supabase.com:5432/postgres`).
 
-Keep that number handy — you'll paste it as `CHAT_ID` below.
+Keep it handy — you'll paste it as `DATABASE_URL` below. The bot creates its one
+table by itself.
 
 ---
 
@@ -42,16 +44,15 @@ Keep that number handy — you'll paste it as `CHAT_ID` below.
    Render reads `render.yaml` and sets up a free web service automatically.
 3. When prompted, fill the secret env vars:
    - `BOT_TOKEN` → your @BotFather token
-   - `CHAT_ID` → the number from Step 0
-   - `CITY` → e.g. `Cairo`
-   - `COUNTRY` → e.g. `Egypt`
-   (`MORNING_TIME`, `EVENING_TIME`, `DAILY_TIP_TIME` already have defaults. Times are
-   in your city's local time — the timezone is detected automatically.)
+   - `DATABASE_URL` → the connection string from Step 0
+   (`MORNING_TIME`, `EVENING_TIME`, etc. already have defaults. Each person gets
+   them in their own local time — the timezone is detected automatically.)
 4. Click **Apply / Deploy**. After a minute the logs show
    `Bot @SunnahCompanionBot is live` and `Health server listening on :10000`.
 5. Copy your service URL — it looks like `https://sunnah-bot-xxxx.onrender.com`.
 
-Send `/times` to your bot to confirm it answers from the cloud. 🎉
+Press **START** in your bot, send `/location`, then `/times` to confirm it answers
+from the cloud. 🎉 Share `t.me/<your_bot_username>` with anyone who wants it.
 
 ---
 
@@ -92,9 +93,6 @@ verification, not charged). Heavier setup:
    After=network-online.target
    [Service]
    Environment=BOT_TOKEN=xxxx
-   Environment=CHAT_ID=12345
-   Environment=CITY=Cairo
-   Environment=COUNTRY=Egypt
    ExecStart=/usr/bin/python3 /home/ubuntu/sunnah_bot.py
    Restart=always
    [Install]
@@ -103,3 +101,5 @@ verification, not charged). Heavier setup:
    Then: `sudo systemctl enable --now sunnah-bot`.
 
 No `PORT` is set here, so the health server stays off and no pinger is needed.
+A VM's disk is permanent, so users are kept in `state.json` next to the script —
+no database needed.
