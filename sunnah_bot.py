@@ -2,41 +2,30 @@
 """
 Sunnah Companion — Telegram reminder bot
 ----------------------------------------
-Sends you reminders to follow the Sunnah of the Prophet Muhammad (peace be upon him):
+Sends reminders to follow the Sunnah of the Prophet Muhammad (peace be upon him):
 prayer times, morning/evening adhkar, and a daily Sunnah tip — even when nothing is open.
 
-Dependencies: `requests` and `tzdata`  (pip install -r requirements.txt)
+Anyone can use it: each person who presses START gets their own location,
+language, calculation method and reminders.
+
+Dependencies: see requirements.txt  (pip install -r requirements.txt)
 
 Setup (once):
   1. On Telegram, message @BotFather -> /newbot -> copy the token.
-  2. Put the token in config.json (copy config.example.json).
+  2. Put the token in config.json (copy config.example.json), or set BOT_TOKEN.
   3. Run this file:  python sunnah_bot.py
-  4. Open your new bot in Telegram and press START. The bot saves your chat id.
-  5. Set your city with:  /city Cairo, Egypt
-  6. Leave it running (PC, a Raspberry Pi, or a free host). See README.md.
+  4. Open your bot in Telegram, press START, and send /location.
+  5. Leave it running (PC, a Raspberry Pi, or a free host). See README.md.
 
-Commands inside Telegram:
-  /start   register for reminders
-  /city <City, Country>   set location for prayer times
-  /times   today's prayer times
-  /today   today's Sunnah checklist
-  /hadith  a hadith from Nawawi's Forty
-  /friday  the Jumu'ah Sunnah acts
-  /fasting recommended fasting days
-  /language  switch العربية / English
-  /dua     a prophetic supplication
-  /tip     a random Sunnah tip
-  /stop    pause reminders     /resume  resume them
-  /help    show commands
+Send /help inside Telegram for the list of commands.
 """
 
-import json, os, time, random, datetime, threading
+import json, os, re, time, random, datetime, threading
 from zoneinfo import ZoneInfo
 import requests
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
-STATE_PATH = os.path.join(HERE, "state.json")
 API = "https://api.telegram.org/bot{token}/{method}"
 
 # ----------------------------------------------------------------------------
@@ -238,12 +227,8 @@ def checklist():
         "▫️ قول الخير أو الصمت")
 
 # ----------------------------------------------------------------------------
-# Config / state
+# Config
 # ----------------------------------------------------------------------------
-# The scheduler and the command poller run in separate threads and both mutate
-# `state`; every read-modify-write of it happens under this lock.
-STATE_LOCK = threading.RLock()
-
 def load_json(path, default):
     if os.path.exists(path):
         try:
@@ -252,15 +237,6 @@ def load_json(path, default):
         except (OSError, ValueError) as e:
             print(f"Warning: couldn't read {os.path.basename(path)} ({e}); starting fresh.")
     return default
-
-def save_json(path, data):
-    # Write to a temp file and rename, so a crash mid-write never leaves a
-    # truncated state.json behind.
-    with STATE_LOCK:
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
 
 # Settings come from environment variables first (best for cloud hosting —
 # the token lives as a secret, never in a committed file), then fall back to
@@ -271,7 +247,8 @@ def cfg(env_key, json_key, default=None):
     v = os.environ.get(env_key)
     if v is not None and v != "":
         return v
-    return config.get(json_key, default)
+    v = config.get(json_key)
+    return default if v in (None, "") else v
 
 TOKEN = cfg("BOT_TOKEN", "bot_token")
 if not TOKEN or "PUT_" in TOKEN:
@@ -281,6 +258,7 @@ if not TOKEN or "PUT_" in TOKEN:
         "  Cloud:  set the BOT_TOKEN environment variable / secret.\n"
     )
 
+# Reminder times, in each user's own local time.
 MORNING = cfg("MORNING_TIME", "morning_time", "07:00")
 EVENING = cfg("EVENING_TIME", "evening_time", "17:30")
 TIP_TIME = cfg("DAILY_TIP_TIME", "daily_tip_time", "09:00")
@@ -288,62 +266,185 @@ HADITH_TIME = cfg("HADITH_TIME", "hadith_time", "08:00")        # daily hadith
 FRIDAY_TIME = cfg("FRIDAY_TIME", "friday_time", "09:30")        # Jumu'ah pack
 FAST_REMIND_TIME = cfg("FAST_REMIND_TIME", "fast_remind_time", "20:00")  # eve-of-fast nudge
 
-# On an always-on host the filesystem is wiped on every restart, so chat_id /
-# city must come from durable env vars (host secrets). Locally they persist in
-# state.json. Env values, when set, win and are kept fresh.
-state = load_json(STATE_PATH, {})
-env_chat = cfg("CHAT_ID", "chat_id")
-state.setdefault("chat_id", int(env_chat) if (env_chat and str(env_chat).lstrip("-").isdigit()) else env_chat)
-if env_chat:
-    state["chat_id"] = int(env_chat) if str(env_chat).lstrip("-").isdigit() else env_chat
-state.setdefault("city", cfg("CITY", "city", ""))
-state.setdefault("country", cfg("COUNTRY", "country", ""))
-if cfg("CITY", "city"):
-    state["city"] = cfg("CITY", "city", "")
-    state["country"] = cfg("COUNTRY", "country", "")
-state.setdefault("paused", False)
-state.setdefault("last_update_id", 0)
-state.setdefault("prayers", None)          # {"date": "YYYY-MM-DD", "times": {...}}
-state.setdefault("sent_today", [])         # keys of reminders already sent today
-state.setdefault("sent_date", "")
-state.setdefault("lang", cfg("LANG", "lang", "en"))   # "en" or "ar"
+DEFAULT_LANG = "ar" if str(cfg("LANG", "lang", "en")).lower().startswith("ar") else "en"
+DATA_DIR = cfg("DATA_DIR", "data_dir", HERE)
+STATE_PATH = os.path.join(DATA_DIR, "state.json")
+DATABASE_URL = cfg("DATABASE_URL", "database_url")
+TICK_SECONDS = 30          # how often reminders are checked
+SEND_INTERVAL = 0.05       # pause between scheduled sends (Telegram allows ~30/s)
+MAX_CITY_LEN = 80
 
-# Prayer-time accuracy settings. Coordinates (shared from the phone, or
-# LATITUDE/LONGITUDE) beat a city name; method/school None = pick by country.
-state.setdefault("lat", None)
-state.setdefault("lng", None)
-state.setdefault("method", None)
-state.setdefault("school", None)          # 0 = Shafi'i/standard Asr, 1 = Hanafi
-state.setdefault("offsets", {})           # {"Fajr": 2, ...} minutes, to match your mosque
-_lat, _lng = cfg("LATITUDE", "latitude"), cfg("LONGITUDE", "longitude")
-if _lat not in (None, "") and _lng not in (None, ""):
-    state["lat"], state["lng"] = float(_lat), float(_lng)
-if cfg("PRAYER_METHOD", "prayer_method") not in (None, ""):
-    state["method"] = int(cfg("PRAYER_METHOD", "prayer_method"))
-_asr = str(cfg("ASR_SCHOOL", "asr_school", "") or "").lower()
-if _asr:
-    state["school"] = 1 if _asr in ("1", "hanafi") else 0
+# ----------------------------------------------------------------------------
+# Storage — every user's settings live in one JSON document, kept in
+# state.json by default, or in Postgres when DATABASE_URL is set. Use Postgres
+# (e.g. a free Supabase or Neon database) on hosts like Render whose disk is
+# wiped on every deploy, or everyone's settings are lost with it.
+# ----------------------------------------------------------------------------
+class FileStore:
+    def __init__(self, path):
+        self.path = path
 
-# Prayer times are in the city's local time, but a cloud host's clock is
-# usually UTC. The city's timezone is detected from the prayer-times API and
-# stored in state["tz"]; TIMEZONE (e.g. "Europe/London") forces it instead.
-TIMEZONE = cfg("TIMEZONE", "timezone")
-if TIMEZONE:
+    def load(self):
+        return load_json(self.path, None)
+
+    def save(self, text):
+        # Write to a temp file and rename, so a crash mid-write never leaves a
+        # truncated state.json behind.
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, self.path)
+
+class PostgresStore:
+    def __init__(self, url):
+        import psycopg
+        self.psycopg, self.url, self.conn = psycopg, url, None
+        self._run("CREATE TABLE IF NOT EXISTS sunnah_bot_state (id int PRIMARY KEY, data text NOT NULL)")
+
+    def _run(self, sql, params=None):
+        for attempt in (1, 2):   # reconnect once if the connection dropped
+            try:
+                if self.conn is None or self.conn.closed:
+                    self.conn = self.psycopg.connect(self.url, autocommit=True)
+                return self.conn.execute(sql, params)
+            except self.psycopg.OperationalError:
+                self.conn = None
+                if attempt == 2:
+                    raise
+
+    def load(self):
+        row = self._run("SELECT data FROM sunnah_bot_state WHERE id = 1").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save(self, text):
+        self._run("INSERT INTO sunnah_bot_state (id, data) VALUES (1, %s) "
+                  "ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data", (text,))
+
+def open_store():
+    if not DATABASE_URL:
+        return FileStore(STATE_PATH)
     try:
-        ZoneInfo(TIMEZONE)
-        state["tz"] = TIMEZONE
-    except Exception:
-        # A typo here would otherwise silently put every reminder on the
-        # server's clock *and* switch off auto-detection.
-        print(f"Warning: unknown TIMEZONE {TIMEZONE!r}; detecting it from your city instead.")
-        TIMEZONE = None
+        return PostgresStore(DATABASE_URL)
+    except Exception as e:
+        from urllib.parse import urlsplit
+        secret = urlsplit(DATABASE_URL).password or "\0"
+        raise SystemExit("Could not connect to the database in DATABASE_URL: "
+                         + str(e).replace(secret, "<password>"))
+
+store = open_store()
+
+# ----------------------------------------------------------------------------
+# Users
+# ----------------------------------------------------------------------------
+USER_DEFAULTS = {
+    "chat_id": None,
+    "lang": DEFAULT_LANG,       # "en" or "ar"
+    "city": "", "country": "",
+    "lat": None, "lng": None,   # shared location (rounded to ~1 km)
+    "method": None,             # Aladhan method id; None = pick by country
+    "school": None,             # 0 = standard Asr, 1 = Hanafi; None = pick by country
+    "offsets": {},              # {"Maghrib": 3, ...} minutes, to match a mosque
+    "tz": None, "tz_fixed": False,
+    "paused": False,
+    "blocked": False,           # the user blocked the bot; resumes when they write again
+    "sent_today": [], "sent_date": "",
+}
+
+def new_user(chat_id):
+    u = json.loads(json.dumps(USER_DEFAULTS))
+    u["chat_id"] = chat_id
+    return u
+
+def load_db(data):
+    """Normalise stored data, upgrading the old single-user state.json."""
+    data = data or {}
+    if "users" not in data:
+        old, data = data, {"last_update_id": data.get("last_update_id", 0), "users": {}}
+        if old.get("chat_id"):
+            data["users"][str(old["chat_id"])] = {k: old[k] for k in USER_DEFAULTS if k in old}
+    data.setdefault("last_update_id", 0)
+    for cid, u in data["users"].items():
+        for k, v in USER_DEFAULTS.items():
+            u.setdefault(k, json.loads(json.dumps(v)))
+        u["chat_id"] = u["chat_id"] if u["chat_id"] is not None else cid
+    return data
+
+db = load_db(store.load())
+_dirty = False
+
+def save():
+    """Mark the data as changed; flush() writes it once per loop turn."""
+    global _dirty
+    _dirty = True
+
+def flush():
+    global _dirty
+    if not _dirty:
+        return
+    try:
+        store.save(json.dumps(db, ensure_ascii=False, indent=1))
+        _dirty = False
+    except Exception as e:
+        print("Couldn't save state:", type(e).__name__, e)
+
+def get_user(chat_id):
+    """The stored user, or a fresh unsaved one for a chat we haven't met."""
+    return db["users"].get(str(chat_id)) or new_user(chat_id)
+
+def register(u):
+    if db["users"].get(str(u["chat_id"])) is not u:
+        db["users"][str(u["chat_id"])] = u
+        print(f"New user registered ({len(db['users'])} total).")
+    save()
+    return u
+
+def is_registered(u):
+    return db["users"].get(str(u["chat_id"])) is u
+
+# The bot serves many people from one loop, one at a time. `state` is the user
+# currently being served — use() switches it — so L(), times, etc. read *their*
+# language, location and timezone.
+state = new_user(None)
+
+def use(u):
+    global state
+    state = u
+    return u
+
+# An operator who set CHAT_ID (and optionally CITY etc.) keeps those settings
+# even if the host wipes the disk.
+def _seed_operator():
+    cid = cfg("CHAT_ID", "chat_id")
+    if cid in (None, ""):
+        return
+    cid = int(cid) if str(cid).lstrip("-").isdigit() else cid
+    u = register(get_user(cid))
+    if cfg("CITY", "city"):
+        u["city"], u["country"] = cfg("CITY", "city"), cfg("COUNTRY", "country", "")
+    lat, lng = cfg("LATITUDE", "latitude"), cfg("LONGITUDE", "longitude")
+    if lat and lng:
+        u["lat"], u["lng"] = round(float(lat), 2), round(float(lng), 2)
+    if cfg("PRAYER_METHOD", "prayer_method"):
+        u["method"] = int(cfg("PRAYER_METHOD", "prayer_method"))
+    asr = str(cfg("ASR_SCHOOL", "asr_school", "")).lower()
+    if asr:
+        u["school"] = 1 if asr in ("1", "hanafi") else 0
+    tz = cfg("TIMEZONE", "timezone")
+    if tz:
+        try:
+            ZoneInfo(tz)
+            u["tz"], u["tz_fixed"] = tz, True
+        except Exception:
+            print(f"Warning: unknown TIMEZONE {tz!r}; detecting it from the location instead.")
+
+_seed_operator()
 
 def L(en, ar):
-    """Pick the string for the user's current language."""
+    """Pick the string for the current user's language."""
     return ar if state.get("lang") == "ar" else en
 
 def now_local():
-    """Current time in the user's city (falls back to the machine's clock)."""
+    """Current time where the current user is (falls back to the machine's clock)."""
     name = state.get("tz")
     if name:
         try:
@@ -354,6 +455,10 @@ def now_local():
 
 def today_local():
     return now_local().date()
+
+def parse_int(s):
+    """int(s) for plain ASCII numbers like '3', '+3', '-2'; None otherwise."""
+    return int(s) if re.fullmatch(r"[+-]?[0-9]{1,4}", s or "") else None
 
 # ----------------------------------------------------------------------------
 # Telegram helpers
@@ -379,21 +484,33 @@ def send(text, chat_id=None, **extra):
     cid = chat_id or state.get("chat_id")
     if not cid:
         return False
-    res = api("sendMessage", chat_id=cid, text=text, parse_mode="Markdown",
-              disable_web_page_preview=True, **extra)
-    # Telegram rejects the whole message if the Markdown doesn't parse (e.g. a
-    # city name with an underscore). Resend it as plain text rather than lose it.
+    params = dict(chat_id=cid, text=text, parse_mode="Markdown",
+                  disable_web_page_preview=True, **extra)
+    res = api("sendMessage", **params)
+    if res.get("error_code") == 429:   # too many requests: wait as told, once
+        time.sleep(min(int((res.get("parameters") or {}).get("retry_after", 1)), 30))
+        res = api("sendMessage", **params)
+    # Telegram rejects the whole message if the Markdown doesn't parse.
+    # Resend it as plain text rather than lose it.
     if res.get("error_code") == 400 and "parse" in str(res.get("description", "")).lower():
-        res = api("sendMessage", chat_id=cid, text=text, disable_web_page_preview=True, **extra)
-    if res and not res.get("ok"):
+        params.pop("parse_mode")
+        res = api("sendMessage", **params)
+    if res.get("error_code") == 403 and str(cid) == str(state.get("chat_id")):
+        # Blocked by the user (or removed from the group): stop messaging them.
+        state["blocked"] = True
+        save()
+    elif res and not res.get("ok"):
         print("Send failed:", res.get("description"))
     return bool(res.get("ok"))
 
 # ----------------------------------------------------------------------------
-# Prayer times (Aladhan API — free, no key)
+# Prayer times (Aladhan API — free, no key). Results are cached in memory and
+# shared by everyone with the same location and settings.
 # ----------------------------------------------------------------------------
 FETCH_RETRY_SECONDS = 600
-_last_fetch_fail = 0.0
+PRAYER_CACHE = {}    # (place, method, school, date) -> {"times", "method", "hijri"}
+_fetch_fail = {}     # (place, method, school) -> time of the last failed fetch
+HHMM = re.compile(r"[0-2][0-9]:[0-5][0-9]")
 
 def has_location():
     return state.get("lat") is not None or bool(state.get("city"))
@@ -407,8 +524,15 @@ def calc_settings():
         school = 1 if country in HANAFI_COUNTRIES else 0
     return method, school
 
+def settings_key():
+    if state.get("lat") is not None:
+        place = ("geo", state["lat"], state["lng"])
+    else:
+        place = ("city", state["city"].lower(), (state.get("country") or "").lower())
+    return (place,) + calc_settings()
+
 def prayer_request(day):
-    """Aladhan URL and query params for `day` at the user's location."""
+    """Aladhan URL and query params for `day` at the current user's location."""
     dmy = day.strftime("%d-%m-%Y")
     if state.get("lat") is not None:
         url = "https://api.aladhan.com/v1/timings/" + dmy
@@ -434,54 +558,67 @@ def apply_offsets(times):
         out[name] = hhmm
     return out
 
+def prayer_entry():
+    """Today's cached prayer data for the current user, or None."""
+    return PRAYER_CACHE.get(settings_key() + (today_local().isoformat(),))
+
 def fetch_prayers():
-    global _last_fetch_fail
+    """Fetch today's times for the current user; returns them adjusted, or None."""
     if not has_location():
         return None
-    today = today_local()
-    url, params = prayer_request(today)
+    skey, day = settings_key(), today_local()
+    url, params = prayer_request(day)
     try:
         j = requests.get(url, params=params, timeout=30).json()
-        if j.get("code") == 200:
-            t = j["data"]["timings"]
-            times = {k: t[k][:5] for k in PRAYERS}
-            meth = ((j["data"].get("meta") or {}).get("method") or {}).get("name", "")
-            state["prayers"] = {"date": today.isoformat(), "times": times, "method": meth}
-            # capture the Hijri date for fasting / occasion reminders
+        data = j.get("data") if j.get("code") == 200 else None
+        t = (data or {}).get("timings") or {}
+        times = {k: str(t.get(k, ""))[:5] for k in PRAYERS}
+        if data and all(HHMM.fullmatch(v) for v in times.values()):
+            hijri = {}
             try:
-                h = j["data"]["date"]["hijri"]
-                state["hijri"] = {"day": int(h["day"]), "month": int(h["month"]["number"]),
-                                  "monthName": h["month"]["en"], "year": h["year"],
-                                  "date": today.isoformat()}
+                h = data["date"]["hijri"]
+                hijri = {"day": int(h["day"]), "month": int(h["month"]["number"]),
+                         "monthName": str(h["month"]["en"]), "year": str(h["year"])}
             except Exception:
                 pass
-            tzname = (j["data"].get("meta") or {}).get("timezone")
-            if tzname and not TIMEZONE:
-                # If the city's date differs from the date we asked for,
+            meta = data.get("meta") or {}
+            PRAYER_CACHE[skey + (day.isoformat(),)] = {
+                "times": times, "hijri": hijri,
+                "method": str((meta.get("method") or {}).get("name", ""))}
+            # Drop entries from before yesterday so the cache can't grow forever.
+            old = (day - datetime.timedelta(days=1)).isoformat()
+            for k in [k for k in PRAYER_CACHE if k[-1] < old]:
+                del PRAYER_CACHE[k]
+            tz = meta.get("timezone")
+            if tz and not state.get("tz_fixed") and tz != state.get("tz"):
+                # If the user's date differs from the date we asked for,
                 # ensure_prayers() notices on its next call and refetches.
-                state["tz"] = tzname
-            save_json(STATE_PATH, state)
-            _last_fetch_fail = 0.0
+                state["tz"] = tz
+                save()
+            _fetch_fail.pop(skey, None)
             return apply_offsets(times)
-        print("Prayer fetch failed:", j.get("data"))
+        print("Prayer fetch failed: unexpected response")
     except Exception as e:
-        print("Prayer fetch error:", e)
-    _last_fetch_fail = time.time()
+        # Not the message itself: it can contain the user's city or coordinates.
+        print("Prayer fetch error:", type(e).__name__)
+    _fetch_fail[skey] = time.time()
     return None
 
-def ensure_prayers():
-    p = state.get("prayers")
-    if not p or p.get("date") != today_local().isoformat():
-        # The scheduler asks every 30s; don't hammer the API after a failure.
-        if time.time() - _last_fetch_fail < FETCH_RETRY_SECONDS:
-            return None
-        return fetch_prayers()
-    return apply_offsets(p["times"])
+def ensure_prayers(force=False):
+    if not has_location():
+        return None
+    entry = prayer_entry()
+    if entry:
+        return apply_offsets(entry["times"])
+    # Checked every 30s; don't hammer the API after a failure.
+    if not force and time.time() - _fetch_fail.get(settings_key(), 0) < FETCH_RETRY_SECONDS:
+        return None
+    return fetch_prayers()
 
 def hijri_today():
-    """Today's Hijri date, or {} if the cached one is from another day."""
-    h = state.get("hijri") or {}
-    return h if h.get("date") == today_local().isoformat() else {}
+    """Today's Hijri date for the current user, or {}."""
+    entry = prayer_entry()
+    return entry["hijri"] if entry else {}
 
 def fmt12(hhmm):
     h, m = map(int, hhmm.split(":"))
@@ -500,11 +637,12 @@ def times_message():
                  "حدد موقعك أولًا: /location (الأدق) أو `/city Cairo, Egypt`")
     t = ensure_prayers()
     if not t:
-        return L("Couldn't load prayer times right now. Please try again in a few minutes.",
-                 "تعذّر تحميل أوقات الصلاة الآن. حاول مرة أخرى بعد دقائق.")
+        return L("Couldn't load prayer times right now. Check the spelling of your city, "
+                 "or try again in a few minutes.",
+                 "تعذّر تحميل أوقات الصلاة الآن. تحقق من كتابة المدينة، أو حاول بعد دقائق.")
     lines = "\n".join(L(f"  *{n}* — {fmt12(v)}", f"  *{PRAYER_AR.get(n, n)}* — {fmt12(v)}") for n, v in t.items())
     _, school = calc_settings()
-    meth = md((state.get("prayers") or {}).get("method") or "")
+    meth = md((prayer_entry() or {}).get("method") or "")
     asr = L("Hanafi", "حنفي") if school == 1 else L("standard", "الجمهور")
     note = L(f"\n\n_Method: {meth} · Asr: {asr}_", f"\n\n_طريقة الحساب: {meth} · العصر: {asr}_") if meth else ""
     if state.get("offsets"):
@@ -512,14 +650,14 @@ def times_message():
     return L(f"🕌 *Prayer times — {place_name()}*\n{lines}", f"🕌 *أوقات الصلاة — {place_name()}*\n{lines}") + note
 
 # ----------------------------------------------------------------------------
-# Reminder scheduling loop
+# Reminders
 # ----------------------------------------------------------------------------
 def reset_daily_if_needed():
     today = today_local().isoformat()
     if state.get("sent_date") != today:
         state["sent_date"] = today
         state["sent_today"] = []
-        save_json(STATE_PATH, state)
+        save()
 
 def due(key, hhmm, now):
     """Return True if reminder `key` scheduled at hhmm is due and unsent."""
@@ -532,13 +670,16 @@ def due(key, hhmm, now):
 
 def mark(key):
     state["sent_today"].append(key)
-    save_json(STATE_PATH, state)
+    save()
 
 def remind(key, text):
     """Send a scheduled reminder; mark it done only once Telegram accepts it,
     so a failed send is retried on the next tick. text=None: nothing to say today."""
-    if text is None or send(text):
+    if text is None:
+        return mark(key)
+    if send(text):
         mark(key)
+    time.sleep(SEND_INTERVAL)
 
 def scheduler_tick(now=None):
     """Send whatever reminders are due right now (called every 30s)."""
@@ -619,18 +760,19 @@ def scheduler_tick(now=None):
                 remind("friday_dua", L("⏳ *The last hour before Maghrib (Friday)*\n\nThis is a time when no Muslim asks Allah for good except that He grants it. (Bukhari)\n\nRaise your hands and make du'a. 🤲",
                                        "⏳ *الساعة الأخيرة قبل المغرب (الجمعة)*\n\nساعة لا يسأل الله فيها مسلمٌ خيرًا إلا أعطاه إياه. (البخاري)\n\nارفع يديك وادعُ. 🤲"))
 
-def scheduler_loop():
-    print("Reminder scheduler running…")
-    while True:
+def scheduler_tick_all():
+    """One round of reminders for every active user."""
+    for u in list(db["users"].values()):
+        if u.get("paused") or u.get("blocked"):
+            continue
+        use(u)
         try:
-            with STATE_LOCK:
-                scheduler_tick()
+            scheduler_tick()
         except Exception as e:
-            print("Scheduler error:", e)
-        time.sleep(30)
+            print("Scheduler error:", type(e).__name__, e)
 
 # ----------------------------------------------------------------------------
-# Command handling (long polling)
+# Commands
 # ----------------------------------------------------------------------------
 def help_text():
     return L(
@@ -650,6 +792,7 @@ def help_text():
         "/language — العربية / English\n"
         "/stop — pause reminders\n"
         "/resume — resume reminders\n"
+        "/forget — delete your data\n"
         "/help — this message",
         "*رفيق السنة* 🤍\n\n"
         "/location — مشاركة موقعك (أدق الأوقات)\n"
@@ -667,53 +810,8 @@ def help_text():
         "/language — العربية / English\n"
         "/stop — إيقاف التذكيرات\n"
         "/resume — استئناف التذكيرات\n"
+        "/forget — حذف بياناتك\n"
         "/help — هذه القائمة")
-
-def cmd_start(text, low, chat_id):
-    state["chat_id"] = chat_id
-    save_json(STATE_PATH, state)
-    send(L("Assalamu alaikum 🤍\n\nYou're registered for Sunnah reminders. "
-           "For the most accurate prayer times, share your location with /location "
-           "(or type your city, e.g. `/city Cairo, Egypt`).\n\n",
-           "السلام عليكم 🤍\n\nتم تسجيلك لتذكيرات السنة. "
-           "لأدق أوقات الصلاة شارك موقعك عبر /location "
-           "(أو اكتب مدينتك، مثال: `/city Cairo, Egypt`).\n\n") + help_text(), chat_id)
-
-def cmd_language(text, low, chat_id):
-    arg = low.replace("/language", "").replace("/lang", "").strip()
-    if "ar" in arg or "عرب" in arg or low.startswith("/arabic") or low.startswith("/عربي") or low.startswith("/العربية"):
-        state["lang"] = "ar"
-    elif "en" in arg or low.startswith("/english"):
-        state["lang"] = "en"
-    else:
-        state["lang"] = "ar" if state.get("lang") == "en" else "en"  # toggle
-    save_json(STATE_PATH, state)
-    send(L("✅ Language set to English.", "✅ تم ضبط اللغة على العربية.") + "\n\n" + help_text(), chat_id)
-
-def cmd_city(text, low, chat_id):
-    rest = text[5:].strip().lstrip(":").strip()
-    if not rest:
-        return send(L("Send it like: `/city Cairo, Egypt`", "أرسلها هكذا: `/city Cairo, Egypt`"), chat_id)
-    if "," in rest:
-        city, country = [x.strip() for x in rest.split(",", 1)]
-    else:
-        city, country = rest, ""
-    state["city"], state["country"] = city, country
-    state["lat"] = state["lng"] = None      # a typed city replaces a shared location
-    state["prayers"] = None
-    save_json(STATE_PATH, state)
-    t = fetch_prayers()
-    if t:
-        send(L(f"📍 Location set to *{md(city)}*.\n\n", f"📍 تم تحديد الموقع: *{md(city)}*.\n\n") + times_message(), chat_id)
-    else:
-        send(L(f"📍 Saved *{md(city)}*, but I couldn't load prayer times. Check the spelling, e.g. `/city Cairo, Egypt`.",
-               f"📍 حُفظت *{md(city)}*، لكن تعذّر تحميل أوقات الصلاة. تحقق من الكتابة، مثال: `/city Cairo, Egypt`."), chat_id)
-
-def refresh_times_reply(chat_id, header):
-    state["prayers"] = None
-    save_json(STATE_PATH, state)
-    fetch_prayers()
-    send(header + "\n\n" + times_message(), chat_id, reply_markup={"remove_keyboard": True})
 
 def cmd_location(text, low, chat_id):
     send(L("📍 Tap the button below to share your location. Prayer times will be "
@@ -725,18 +823,11 @@ def cmd_location(text, low, chat_id):
                                       "request_location": True}]],
                        "one_time_keyboard": True, "resize_keyboard": True})
 
-def handle_location(loc, chat_id):
-    """A location shared from the phone (the most accurate way to set it)."""
-    if not is_owner(chat_id):
-        return send(L("This is a private Sunnah Companion bot — it's already registered to someone else.",
-                      "هذا بوت خاص — وهو مسجّل لشخص آخر بالفعل."), chat_id)
-    state["lat"], state["lng"] = round(float(loc["latitude"]), 4), round(float(loc["longitude"]), 4)
-    refresh_times_reply(chat_id, L("📍 Got your location.", "📍 تم استلام موقعك."))
-
 def cmd_method(text, low, chat_id):
     arg = low.split(maxsplit=1)[1].strip() if " " in low else ""
-    if arg.isdigit() and (int(arg) == 0 or int(arg) in METHODS):
-        state["method"] = int(arg) or None
+    n = parse_int(arg)
+    if n is not None and (n == 0 or n in METHODS):
+        state["method"] = n or None
         method, _ = calc_settings()
         name = METHODS.get(method, L("closest authority to you", "أقرب هيئة لموقعك"))
         return refresh_times_reply(chat_id, L(f"✅ Calculation method: *{name}*", f"✅ طريقة الحساب: *{name}*"))
@@ -766,9 +857,10 @@ def cmd_adjust(text, low, chat_id):
         state["offsets"] = {}
         return refresh_times_reply(chat_id, L("✅ Adjustments cleared.", "✅ تم حذف التعديلات."))
     names = {p.lower(): p for p in PRAYERS}
-    if len(parts) == 3 and parts[1] in names and parts[2].lstrip("+-").isdigit() and abs(int(parts[2])) <= 60:
+    n = parse_int(parts[2]) if len(parts) == 3 else None
+    if n is not None and parts[1] in names and abs(n) <= 60:
         offs = dict(state.get("offsets") or {})
-        offs[names[parts[1]]] = int(parts[2])
+        offs[names[parts[1]]] = n
         state["offsets"] = {k: v for k, v in offs.items() if v}
         return refresh_times_reply(chat_id, L("✅ Adjusted.", "✅ تم التعديل."))
     send(L("Match your mosque's timetable by shifting a prayer (±60 min):\n"
@@ -812,8 +904,9 @@ def cmd_fasting(text, low, chat_id):
                "• *الأيام البيض* — ١٣ و١٤ و١٥ من كل شهر هجري. (البخاري)"])
     lines = list(lines)
     if hij.get("day"):
-        lines.append(L(f"\n_Today is {hij['day']} {hij.get('monthName','')} {hij.get('year','')} AH._",
-                       f"\n_اليوم {hij['day']} {hij.get('monthName','')} {hij.get('year','')}هـ._"))
+        month, year = md(hij.get("monthName", "")), md(hij.get("year", ""))
+        lines.append(L(f"\n_Today is {hij['day']} {month} {year} AH._",
+                       f"\n_اليوم {hij['day']} {month} {year}هـ._"))
         occ = fasting_special(hij["day"], hij["month"])
         if occ:
             lines.append(L("👉 Today is " + "; ".join(occ), "👉 اليوم " + "؛ ".join(occ)))
@@ -827,27 +920,84 @@ def cmd_tip(text, low, chat_id):
     tp = random.choice(TIPS)
     send("🌿 " + L(tp[0], tp[1]), chat_id)
 
+def cmd_start(text, low, chat_id):
+    send(L("Assalamu alaikum 🤍\n\nYou're registered for Sunnah reminders. "
+           "For the most accurate prayer times, share your location with /location "
+           "(or type your city, e.g. `/city Cairo, Egypt`).\n\n",
+           "السلام عليكم 🤍\n\nتم تسجيلك لتذكيرات السنة. "
+           "لأدق أوقات الصلاة شارك موقعك عبر /location "
+           "(أو اكتب مدينتك، مثال: `/city Cairo, Egypt`).\n\n") + help_text(), chat_id)
+
+def cmd_language(text, low, chat_id):
+    arg = low.replace("/language", "").replace("/lang", "").strip()
+    if "ar" in arg or "عرب" in arg or low.startswith(("/arabic", "/عربي", "/العربية")):
+        state["lang"] = "ar"
+    elif "en" in arg or low.startswith("/english"):
+        state["lang"] = "en"
+    else:
+        state["lang"] = "ar" if state.get("lang") == "en" else "en"  # toggle
+    save()
+    send(L("✅ Language set to English.", "✅ تم ضبط اللغة على العربية.") + "\n\n" + help_text(), chat_id)
+
+def cmd_city(text, low, chat_id):
+    rest = text[5:].strip().lstrip(":").strip()
+    if not rest or len(rest) > MAX_CITY_LEN:
+        return send(L("Send it like: `/city Cairo, Egypt`", "أرسلها هكذا: `/city Cairo, Egypt`"), chat_id)
+    if "," in rest:
+        city, country = [x.strip() for x in rest.split(",", 1)]
+    else:
+        city, country = rest, ""
+    state["city"], state["country"] = city, country
+    state["lat"] = state["lng"] = None      # a typed city replaces a shared location
+    save()
+    if ensure_prayers(force=True):
+        send(L(f"📍 Location set to *{md(city)}*.\n\n", f"📍 تم تحديد الموقع: *{md(city)}*.\n\n") + times_message(), chat_id)
+    else:
+        send(L(f"📍 Saved *{md(city)}*, but I couldn't load prayer times. Check the spelling, e.g. `/city Cairo, Egypt`.",
+               f"📍 حُفظت *{md(city)}*، لكن تعذّر تحميل أوقات الصلاة. تحقق من الكتابة، مثال: `/city Cairo, Egypt`."), chat_id)
+
+def refresh_times_reply(chat_id, header):
+    save()
+    ensure_prayers(force=True)
+    send(header + "\n\n" + times_message(), chat_id, reply_markup={"remove_keyboard": True})
+
+def handle_location(loc, chat_id):
+    """A location shared from the phone (the most accurate way to set it)."""
+    use(register(get_user(chat_id)))
+    state["blocked"] = False
+    # ~1 km precision: plenty for prayer times, and we don't keep exact addresses.
+    state["lat"], state["lng"] = round(float(loc["latitude"]), 2), round(float(loc["longitude"]), 2)
+    refresh_times_reply(chat_id, L("📍 Got your location.", "📍 تم استلام موقعك."))
+
 def cmd_stop(text, low, chat_id):
-    state["paused"] = True; save_json(STATE_PATH, state)
+    if not is_registered(state):
+        return send(L("You're not signed up for reminders. Send /start to begin.",
+                      "لست مشتركًا في التذكيرات. أرسل /start للبدء."), chat_id)
+    state["paused"] = True
+    save()
     send(L("Reminders paused. Send /resume anytime.", "تم إيقاف التذكيرات. أرسل /resume في أي وقت."), chat_id)
 
 def cmd_resume(text, low, chat_id):
-    state["paused"] = False; save_json(STATE_PATH, state)
+    state["paused"] = False
+    save()
     send(L("Reminders resumed. 🤍", "تم استئناف التذكيرات. 🤍"), chat_id)
+
+def cmd_forget(text, low, chat_id):
+    db["users"].pop(str(chat_id), None)
+    save()
+    send(L("🗑️ Done — your settings and location are deleted and reminders stopped. "
+           "Send /start if you ever want them back.",
+           "🗑️ تم — حُذفت إعداداتك وموقعك وتوقفت التذكيرات. أرسل /start متى أردت العودة."), chat_id)
 
 def cmd_help(text, low, chat_id):
     send(help_text(), chat_id)
 
-
 def cmd_unknown(text, low, chat_id):
     send(L("I didn't recognise that. Send /help for commands.", "لم أفهم ذلك. أرسل /help لعرض الأوامر."), chat_id)
 
-# Ordered dispatch table: (matcher, handler, owner_only). owner_only commands
-# change the bot's settings: once it is registered to a chat, other chats can't
-# take it over or change it. First match wins, so the order
-# here reproduces the old if/elif chain exactly (prefix match, not equality).
-# handle() calls the handler indirectly through this list, which is also why it
-# is no longer a "god node" in the call graph — each command owns its own edges.
+# Ordered dispatch table: (matcher, handler, registers). First match wins
+# (prefix match, not equality). `registers` commands sign the chat up for
+# reminders — each person's settings are their own.
 def _starts(*prefixes):
     return lambda low: any(low.startswith(p) for p in prefixes)
 
@@ -866,57 +1016,75 @@ COMMANDS = [
     (lambda low: low.startswith("/fasting") or (low.startswith("/fast") and not low.startswith("/faste")), cmd_fasting, False),
     (_starts("/dua"), cmd_dua, False),
     (_starts("/tip"), cmd_tip, False),
-    (_starts("/stop"), cmd_stop, True),
+    (_starts("/stop"), cmd_stop, False),
     (_starts("/resume"), cmd_resume, True),
+    (_starts("/forget", "/delete"), cmd_forget, False),
     (_starts("/help"), cmd_help, False),
 ]
-
-def is_owner(chat_id):
-    owner = state.get("chat_id")
-    return not owner or str(owner) == str(chat_id)
 
 def handle(text, chat_id):
     text = (text or "").strip()
     if not text:
         return  # stickers, photos, etc.
+    use(get_user(chat_id))
+    if state.get("blocked"):
+        state["blocked"] = False   # they're talking to us again
+        save()
     # In groups Telegram sends "/city@MyBot Cairo" — drop the @MyBot part.
     head, sep, rest = text.partition(" ")
     if head.startswith("/") and "@" in head:
         text = head.split("@", 1)[0] + sep + rest
     low = text.lower()
-    for matches, fn, owner_only in COMMANDS:
+    for matches, fn, registers in COMMANDS:
         if matches(low):
-            if owner_only and not is_owner(chat_id):
-                return send(L("This is a private Sunnah Companion bot — it's already registered to someone else.",
-                              "هذا بوت خاص — وهو مسجّل لشخص آخر بالفعل."), chat_id)
+            if registers:
+                register(state)
             return fn(text, low, chat_id)
     return cmd_unknown(text, low, chat_id)
 
-def polling_loop():
-    print("Listening for Telegram commands…")
+def process_update(upd):
+    msg = upd.get("message") or upd.get("edited_message")
+    if not msg:
+        return
+    chat_id = msg["chat"]["id"]
+    if msg.get("location"):
+        handle_location(msg["location"], chat_id)
+    else:
+        handle(msg.get("text", ""), chat_id)
+
+# ----------------------------------------------------------------------------
+# Main loop — one thread does both jobs: it checks reminders every 30s and, in
+# between, long-polls Telegram so commands are answered right away. No locks.
+# ----------------------------------------------------------------------------
+def run_forever():
+    print("Listening for Telegram commands and sending reminders…")
+    next_tick = 0.0
     while True:
         try:
-            res = api("getUpdates", offset=state["last_update_id"] + 1, timeout=25)
+            if time.time() >= next_tick:
+                scheduler_tick_all()
+                next_tick = time.time() + TICK_SECONDS
+            wait = max(0, min(25, int(next_tick - time.time())))
+            res = api("getUpdates", offset=db["last_update_id"] + 1, timeout=wait,
+                      allowed_updates=["message", "edited_message"])
             if not res.get("ok"):
                 # Network down, or 409 = another copy of the bot is polling
                 # with the same token. Back off instead of spinning.
                 print("getUpdates failed:", res.get("description", "no response"))
                 time.sleep(10)
                 continue
-            updates = res.get("result", [])
-            for upd in updates:
-                with STATE_LOCK:
-                    state["last_update_id"] = upd["update_id"]
-                    msg = upd.get("message") or upd.get("edited_message")
-                    if msg and msg.get("location"):
-                        handle_location(msg["location"], msg["chat"]["id"])
-                    elif msg:
-                        handle(msg.get("text", ""), msg["chat"]["id"])
-            if updates:  # an empty long-poll changes nothing worth writing
-                save_json(STATE_PATH, state)
+            for upd in res.get("result", []):
+                db["last_update_id"] = upd["update_id"]
+                save()
+                try:
+                    process_update(upd)
+                except Exception as e:   # one bad message must not stop the rest
+                    print("Error handling a message:", type(e).__name__, e)
         except Exception as e:
-            print("Polling error:", e)
+            print("Loop error:", type(e).__name__, e)
             time.sleep(5)
+        finally:
+            flush()
 
 # ----------------------------------------------------------------------------
 # Tiny health-check web server. Cloud hosts (Render, Koyeb, etc.) set $PORT and
@@ -930,14 +1098,19 @@ def start_health_server():
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class H(BaseHTTPRequestHandler):
+        server_version = "SunnahBot"
+        sys_version = ""
+
         def do_GET(self):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"Sunnah Companion bot is alive \xf0\x9f\xa4\x8d")
+
         def do_HEAD(self):  # some uptime pingers use HEAD
             self.send_response(200)
             self.end_headers()
+
         def log_message(self, *a):
             pass
 
@@ -947,6 +1120,9 @@ def start_health_server():
 
 def main():
     start_health_server()
+    if os.environ.get("PORT") and not DATABASE_URL and not cfg("DATA_DIR", "data_dir"):
+        print("Warning: users are saved to local disk, which many cloud hosts wipe on every "
+              "deploy. Set DATABASE_URL (free Postgres, e.g. Supabase/Neon) to keep them.")
     delay = 5
     while True:
         me = api("getMe")
@@ -957,9 +1133,8 @@ def main():
         print(f"Could not reach Telegram — retrying in {delay}s…")
         time.sleep(delay)
         delay = min(delay * 2, 300)
-    print(f"Bot @{me['result']['username']} is live. Press Ctrl+C to stop.")
-    threading.Thread(target=scheduler_loop, daemon=True).start()
-    polling_loop()
+    print(f"Bot @{me['result']['username']} is live with {len(db['users'])} user(s). Press Ctrl+C to stop.")
+    run_forever()
 
 if __name__ == "__main__":
     main()

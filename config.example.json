@@ -1,5 +1,13 @@
 {
   "bot_token": "PUT_YOUR_BOTFATHER_TOKEN_HERE",
+  "lang": "en",
+  "morning_time": "07:00",
+  "evening_time": "17:30",
+  "daily_tip_time": "09:00",
+  "hadith_time": "08:00",
+  "friday_time": "09:30",
+  "fast_remind_time": "20:00",
+  "database_url": "",
   "chat_id": null,
   "city": "",
   "country": "",
@@ -7,12 +15,5 @@
   "longitude": "",
   "prayer_method": "",
   "asr_school": "",
-  "lang": "en",
-  "timezone": "",
-  "morning_time": "07:00",
-  "evening_time": "17:30",
-  "daily_tip_time": "09:00",
-  "hadith_time": "08:00",
-  "friday_time": "09:30",
-  "fast_remind_time": "20:00"
+  "timezone": ""
 }

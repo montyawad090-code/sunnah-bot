@@ -1,2 +1,4 @@
-requests>=2.28
-tzdata  # timezone data for zoneinfo (needed on Windows and slim images)
+# Pinned so a surprise upstream release can't break (or compromise) a deploy.
+requests==2.34.2
+tzdata==2026.4          # timezone data for zoneinfo (needed on Windows and slim images)
+psycopg[binary]==3.3.6  # only used when DATABASE_URL is set
