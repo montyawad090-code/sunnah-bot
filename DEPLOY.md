@@ -45,7 +45,8 @@ Keep that number handy — you'll paste it as `CHAT_ID` below.
    - `CHAT_ID` → the number from Step 0
    - `CITY` → e.g. `Cairo`
    - `COUNTRY` → e.g. `Egypt`
-   (`MORNING_TIME`, `EVENING_TIME`, `DAILY_TIP_TIME` already have defaults.)
+   (`MORNING_TIME`, `EVENING_TIME`, `DAILY_TIP_TIME` already have defaults. Times are
+   in your city's local time — the timezone is detected automatically.)
 4. Click **Apply / Deploy**. After a minute the logs show
    `Bot @SunnahCompanionBot is live` and `Health server listening on :10000`.
 5. Copy your service URL — it looks like `https://sunnah-bot-xxxx.onrender.com`.
