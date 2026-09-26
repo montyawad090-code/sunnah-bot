@@ -10,6 +10,7 @@ Run:  python test_sunnah_bot.py       (or: python -m pytest -q)
 """
 import datetime
 import io
+import json
 import os
 import sys
 import tempfile
@@ -40,10 +41,12 @@ class BotTestBase(unittest.TestCase):
         bot.send = lambda text, chat_id=None, **kw: self.sent.append((text, chat_id or bot.state["chat_id"])) or True
         bot.fetch_prayers = lambda *a, **k: None          # never hit the Aladhan API
         bot.store = mock.Mock()                           # never touch disk / Postgres
-        bot.db = {"last_update_id": 0, "users": {}}
+        bot.db = {"last_update_id": 0, "users": {}, "dispatch": {}}
         bot.SEND_INTERVAL = 0
         bot.PRAYER_CACHE.clear()
         bot._fetch_fail.clear()
+        bot._late.clear()
+        bot._last_round = None
         self.u = bot.use(bot.register(bot.new_user(1)))
         self.u["lang"] = "en"
 
@@ -64,6 +67,14 @@ class BotTestBase(unittest.TestCase):
     def last_chat(self):
         self.assertTrue(self.sent, "expected the bot to send a message")
         return self.sent[-1][1]
+
+    def ledger(self):
+        """Today's dispatch row as /health reports it."""
+        today = bot.utc_today().isoformat()
+        return bot.dispatch_report().get(today) or {"totals": {}, "reminders": {}}
+
+    def counts(self, key):
+        return self.ledger()["reminders"].get(key, {})
 
 
 class TestL(BotTestBase):
@@ -237,6 +248,187 @@ class TestScheduler(BotTestBase):
         self.assertIn("Morning", by_chat[1])
         self.assertIn("أذكار الصباح", by_chat[2])
         self.assertNotIn(3, by_chat)
+
+
+class TestDispatchLedger(BotTestBase):
+    """The evidence the daily health check reads: every fire is counted, and a
+    reminder that never went out is counted too."""
+
+    def setUp(self):
+        super().setUp()
+        self.u.update({"city": "Bristol", "country": "United Kingdom"})
+        self.seed_times()
+
+    def at(self, hhmm, sec=30):
+        return datetime.datetime.combine(TODAY, datetime.time.fromisoformat(f"{hhmm}:{sec:02d}"))
+
+    def test_a_sent_reminder_is_counted_with_its_lateness(self):
+        bot.scheduler_tick(self.at("12:00"))
+        c = self.counts("salah_Dhuhr")
+        self.assertEqual((c["sent"], c["failed"], c["dupe"], c["missed"]), (1, 0, 0, 0))
+        self.assertEqual(c["late_max_s"], 30)   # fired 30s past the scheduled minute
+
+    def test_a_failed_send_is_counted_and_not_marked_sent(self):
+        bot.send = lambda *a, **k: False
+        bot.scheduler_tick(self.at("12:00"))
+        c = self.counts("salah_Dhuhr")
+        self.assertEqual((c["sent"], c["failed"]), (0, 1))
+        self.assertNotIn("salah_Dhuhr", self.u["sent_today"])
+
+    def test_a_closed_send_window_is_counted_as_missed(self):
+        bot.scheduler_tick(self.at("12:05"))   # window is 12:00–12:03
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.counts("salah_Dhuhr")["missed"], 1)
+
+    def test_a_missed_reminder_is_only_counted_once(self):
+        bot.scheduler_tick(self.at("12:05"))
+        bot.scheduler_tick(self.at("12:06"))
+        bot.scheduler_tick(self.at("12:20"))
+        self.assertEqual(self.counts("salah_Dhuhr")["missed"], 1)
+
+    def test_long_past_reminders_are_not_counted_as_missed(self):
+        # Someone who starts the bot in the afternoon was never owed Fajr.
+        bot.scheduler_tick(self.at("13:00"))
+        self.assertEqual(self.ledger()["reminders"], {})
+
+    def test_a_second_send_of_the_same_reminder_is_counted_as_a_duplicate(self):
+        bot.remind("morning", "first")
+        bot.remind("morning", "second")   # only reachable if a caller skips due()
+        c = self.counts("morning")
+        self.assertEqual((c["sent"], c["dupe"]), (2, 1))
+
+    def test_dispatch_stays_idempotent_across_ticks(self):
+        for sec in (0, 30, 59):
+            bot.scheduler_tick(self.at("12:00", sec))
+        bot.scheduler_tick(self.at("12:02"))
+        self.assertEqual(len(self.sent), 1)
+        c = self.counts("salah_Dhuhr")
+        self.assertEqual((c["sent"], c["dupe"], c["missed"]), (1, 0, 0))
+
+    def test_nothing_to_say_today_is_not_counted_as_a_fire(self):
+        self.seed_times(hijri={"day": 5, "month": 3})   # no fasting occasion
+        bot.scheduler_tick(self.at(bot.HADITH_TIME))
+        self.assertEqual(self.counts("occasion"), {})
+
+    def test_a_scheduler_gap_is_recorded(self):
+        with mock.patch.object(bot.time, "monotonic", side_effect=[0.0, 900.0, 900.0]):
+            bot.scheduler_tick_all()
+            bot.scheduler_tick_all()
+        totals = self.ledger()["totals"]
+        self.assertEqual(totals["gaps"], 1)
+        self.assertEqual(totals["gap_max_s"], 900)
+
+    def test_the_ledger_never_holds_a_chat_id(self):
+        loud = bot.use(bot.register(bot.new_user(987654321)))
+        loud.update({"lang": "en", "city": "Bristol", "country": "United Kingdom"})
+        self.seed_times()
+        bot.scheduler_tick(self.at("12:00"))
+        self.assertNotIn("987654321", json.dumps(bot.db["dispatch"]))
+
+    def test_old_days_are_pruned(self):
+        old = (bot.utc_today() - datetime.timedelta(days=30)).isoformat()
+        keep = (bot.utc_today() - datetime.timedelta(days=2)).isoformat()
+        bot.db["dispatch"] = {old: {"reminders": {}}, keep: {"reminders": {}}}
+        bot.dispatch_day()   # creating today's row prunes
+        self.assertNotIn(old, bot.db["dispatch"])
+        self.assertIn(keep, bot.db["dispatch"])
+
+
+class TestDispatchVerdict(BotTestBase):
+    """Pass/fail the daily health check reads straight off /health."""
+
+    def today(self):
+        return bot.utc_today()
+
+    def test_a_clean_day_passes(self):
+        bot.dispatch_record("morning", "sent", 12)
+        v = bot.dispatch_verdict(self.today())
+        self.assertTrue(v["pass"], v["fail"])
+        self.assertEqual(v["fail"], [])
+
+    def test_a_missed_reminder_fails(self):
+        bot.dispatch_record("morning", "sent")
+        bot.dispatch_record("salah_Asr", "missed")
+        v = bot.dispatch_verdict(self.today())
+        self.assertFalse(v["pass"])
+        self.assertTrue(any("never went out" in r for r in v["fail"]))
+
+    def test_a_duplicate_fails(self):
+        bot.dispatch_record("morning", "sent")
+        bot.dispatch_record("morning", "dupe")
+        self.assertFalse(bot.dispatch_verdict(self.today())["pass"])
+
+    def test_a_long_scheduler_gap_fails(self):
+        bot.dispatch_record("morning", "sent")
+        bot.dispatch_note("gap_max_s", bot.MAX_GAP_SECONDS + 1)
+        self.assertFalse(bot.dispatch_verdict(self.today())["pass"])
+
+    def test_a_silent_day_with_active_users_fails(self):
+        v = bot.dispatch_verdict(self.today())   # no row at all
+        self.assertFalse(v["pass"])
+        self.assertTrue(any("no dispatch recorded" in r for r in v["fail"]))
+
+    def test_a_silent_day_with_no_active_users_passes(self):
+        self.u["paused"] = True
+        self.assertTrue(bot.dispatch_verdict(self.today())["pass"])
+
+    def test_a_retried_send_warns_but_passes(self):
+        bot.dispatch_record("morning", "failed")
+        bot.dispatch_record("morning", "sent")
+        v = bot.dispatch_verdict(self.today())
+        self.assertTrue(v["pass"], v["fail"])
+        self.assertTrue(any("retried" in w for w in v["warn"]))
+
+    def test_a_prayer_times_outage_warns_but_passes(self):
+        bot.dispatch_record("morning", "sent")
+        bot.dispatch_note("prayers_unavailable")
+        v = bot.dispatch_verdict(self.today())
+        self.assertTrue(v["pass"], v["fail"])
+        self.assertTrue(any("prayer times" in w for w in v["warn"]))
+
+    def test_a_prayer_times_outage_is_recorded_from_a_failed_fetch(self):
+        self.u.update({"city": "Bristol", "country": "United Kingdom"})
+
+        def failing_fetch():
+            bot._fetch_fail[bot.settings_key()] = bot.time.time()
+            return None
+
+        bot.fetch_prayers = failing_fetch
+        bot.scheduler_tick(datetime.datetime.combine(TODAY, datetime.time(12, 0, 30)))
+        self.assertEqual(self.ledger()["totals"]["prayers_unavailable"], 1)
+
+
+class TestHealthEndpoint(BotTestBase):
+    def test_root_stays_a_plain_liveness_reply(self):
+        status, ctype, body = bot.health_response("/")
+        self.assertEqual(status, 200)
+        self.assertIn("text/plain", ctype)
+        self.assertIn(b"alive", body)
+
+    def test_health_returns_the_ledger_as_json(self):
+        bot.dispatch_record("morning", "sent", 5)
+        status, ctype, body = bot.health_response("/health")
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", ctype)
+        payload = json.loads(body)
+        self.assertEqual(payload["users_active"], 1)
+        self.assertEqual(payload["late_window_s"], bot.LATE_WINDOW_MINUTES * 60)
+        self.assertIn("verdict", payload)
+        today = bot.utc_today().isoformat()
+        self.assertEqual(payload["dispatch"][today]["reminders"]["morning"]["sent"], 1)
+
+    def test_health_is_hidden_without_the_token_when_one_is_set(self):
+        with mock.patch.object(bot, "HEALTH_TOKEN", "s3cret"):
+            self.assertEqual(bot.health_response("/health")[0], 404)
+            self.assertEqual(bot.health_response("/health?token=wrong")[0], 404)
+            self.assertEqual(bot.health_response("/health?token=s3cret")[0], 200)
+
+    def test_a_broken_report_does_not_break_the_probe(self):
+        with mock.patch.object(bot, "dispatch_report", side_effect=RuntimeError("boom")):
+            with redirect_stdout(io.StringIO()):
+                status, _, body = bot.health_response("/health")
+        self.assertEqual(status, 503)       # never silently looks like a pass
+        self.assertEqual(json.loads(body), {"error": "RuntimeError"})
 
 
 class TestSend(BotTestBase):

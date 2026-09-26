@@ -77,6 +77,53 @@ The bot only sends reminders while the script is running. Options:
 - **A free/cheap cloud host** (Render, Railway, Fly.io, a small VPS) — always on,
   independent of your PC. See [DEPLOY.md](DEPLOY.md).
 
+### Did the reminders go out?
+
+When the bot runs with a `PORT` set, it answers `GET /health` with JSON: a
+seven-day ledger of how many reminders were **sent**, **failed**, sent **twice**
+or **missed**, how late they were, and a pass/fail verdict for yesterday. It is
+counters only — no chat ids, no cities, no per-person timeline — so it says
+whether the reminders worked without recording who got what.
+
+```bash
+curl -s "$BOT_URL/health?token=$HEALTH_TOKEN" | jq '.verdict'
+```
+
+```json
+{ "date": "2026-09-25", "pass": true, "fail": [], "warn": [],
+  "totals": { "sent": 214, "failed": 0, "dupe": 0, "missed": 0, "late_max_s": 41,
+              "prayers_unavailable": 0, "gaps": 0, "gap_max_s": 0 } }
+```
+
+`.verdict.pass` is the whole check: `true` → say so and stop. `false` → read
+`.verdict.fail`, which is one of
+
+| Failure | What it means |
+| --- | --- |
+| `N reminder(s) never went out` | a send window (3 min after the scheduled minute) closed with nothing delivered |
+| `N reminder(s) were sent twice` | the once-a-day guard broke — a user got the same reminder again |
+| `no reminder was sent` / `no dispatch recorded at all` | the scheduler did not run that day |
+| `the scheduler was silent for Ns` | the process stopped or slept for over 5 minutes, so anything due in that hole was skipped |
+| `a reminder was Ns late` | the send window itself changed; the code no longer matches this check |
+
+`.verdict.warn` is not a failure: a send that Telegram refused once and the next
+tick delivered, or a prayer-times fetch that didn't answer. Worth a line in the
+status comment, not a task. `.dispatch` has the same counters per reminder key
+(`morning`, `salah_Fajr`, …) when you need to know *which* reminder broke.
+
+Notes for whoever reads this daily:
+
+- Days are **UTC**, because users are in many timezones — yesterday's row is
+  final at 00:00 UTC, so check any time after that.
+- The verdict covers **the Telegram bot only**. The PWA and Android app schedule
+  their reminders on the device and report nothing back, by design; there is no
+  data to check and this endpoint does not invent any.
+- The first verdict is meaningful from the second full UTC day after a deploy —
+  before that, yesterday has no row and it reports `no dispatch recorded at all`.
+- Set `HEALTH_TOKEN` on a public host. Without it `/health` is readable by
+  anyone who guesses the path (it still holds no personal data). `/` keeps
+  answering plain text either way, so an uptime pinger needs no change.
+
 ### Where users are saved
 
 Everyone's settings are saved in `state.json` next to the script (or in
@@ -92,7 +139,8 @@ free Postgres database (e.g. [Supabase](https://supabase.com) or
 - **Privacy:** each person only ever sees their own settings. Shared locations
   are stored rounded to about 1 km, nothing else about users is kept, and
   `/forget` deletes a person's data. Logs never include users' cities, locations
-  or messages.
+  or messages. The dispatch ledger behind `/health` counts reminders, not people:
+  it holds no chat ids and keeps seven days.
 - Reminders use **each person's local time**, detected automatically from the
   prayer-times API — so a cloud host running on UTC still reminds everyone on time.
 - **Your own settings on a host (optional):** set `CHAT_ID` (your Telegram chat id)

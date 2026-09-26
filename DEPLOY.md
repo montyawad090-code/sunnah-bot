@@ -45,6 +45,10 @@ table by itself.
 3. When prompted, fill the secret env vars:
    - `BOT_TOKEN` → your @BotFather token
    - `DATABASE_URL` → the connection string from Step 0
+   - `HEALTH_TOKEN` → any long random string. It gates `/health`, the JSON
+     reminder ledger the daily check reads (see
+     [Did the reminders go out?](README.md#did-the-reminders-go-out) — without it
+     the counters are readable by anyone who guesses the path).
    (`MORNING_TIME`, `EVENING_TIME`, etc. already have defaults. Each person gets
    them in their own local time — the timezone is detected automatically.)
 4. Click **Apply / Deploy**. After a minute the logs show

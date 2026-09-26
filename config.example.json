@@ -8,6 +8,7 @@
   "friday_time": "09:30",
   "fast_remind_time": "20:00",
   "database_url": "",
+  "health_token": "",
   "chat_id": null,
   "city": "",
   "country": "",
