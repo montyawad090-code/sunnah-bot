@@ -47,6 +47,7 @@ class BotTestBase(unittest.TestCase):
         bot._fetch_fail.clear()
         bot._late.clear()
         bot._last_round = None
+        bot._heartbeat_saved = 0.0
         self.u = bot.use(bot.register(bot.new_user(1)))
         self.u["lang"] = "en"
 
@@ -317,6 +318,39 @@ class TestDispatchLedger(BotTestBase):
         totals = self.ledger()["totals"]
         self.assertEqual(totals["gaps"], 1)
         self.assertEqual(totals["gap_max_s"], 900)
+
+    def test_a_gap_across_a_restart_is_recorded(self):
+        # The process was down for two hours and has just come back. monotonic()
+        # started again with it, so only the persisted marker can see the hole —
+        # and reminders due inside it are long past due()'s miss grace.
+        bot.db["last_round_utc"] = (datetime.datetime.now(datetime.timezone.utc)
+                                    - datetime.timedelta(hours=2)).isoformat()
+        bot._last_round = None
+        bot.scheduler_tick_all()
+        totals = self.ledger()["totals"]
+        self.assertEqual(totals["gaps"], 1)
+        self.assertGreater(totals["gap_max_s"], 2 * 3600 - 60)
+        self.assertFalse(bot.dispatch_verdict(bot.utc_today())["pass"])
+
+    def test_a_first_ever_start_is_not_a_gap(self):
+        bot.db.pop("last_round_utc", None)
+        bot._last_round = None
+        bot.scheduler_tick_all()
+        self.assertEqual(self.ledger()["totals"].get("gaps", 0), 0)
+
+    def test_a_brief_restart_is_not_a_gap(self):
+        # A redeploy that takes well under the send window is not lost time.
+        bot.db["last_round_utc"] = (datetime.datetime.now(datetime.timezone.utc)
+                                    - datetime.timedelta(seconds=45)).isoformat()
+        bot._last_round = None
+        bot.scheduler_tick_all()
+        self.assertEqual(self.ledger()["totals"].get("gaps", 0), 0)
+
+    def test_the_round_marker_reaches_the_store(self):
+        bot.scheduler_tick_all()
+        bot.flush()
+        written = json.loads(bot.store.save.call_args[0][0])
+        self.assertIn("last_round_utc", written)   # survives the restart, not just in memory
 
     def test_the_ledger_never_holds_a_chat_id(self):
         loud = bot.use(bot.register(bot.new_user(987654321)))

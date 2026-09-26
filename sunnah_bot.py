@@ -927,20 +927,47 @@ def scheduler_tick(now=None):
                 remind("friday_dua", L("⏳ *The last hour before Maghrib (Friday)*\n\nThis is a time when no Muslim asks Allah for good except that He grants it. (Bukhari)\n\nRaise your hands and make du'a. 🤲",
                                        "⏳ *الساعة الأخيرة قبل المغرب (الجمعة)*\n\nساعة لا يسأل الله فيها مسلمٌ خيرًا إلا أعطاه إياه. (البخاري)\n\nارفع يديك وادعُ. 🤲"))
 
-_last_round = None   # monotonic time of the previous round, to spot lost time
+_last_round = None      # monotonic time of the previous round, to spot lost time
+_heartbeat_saved = 0.0  # monotonic time the marker below was last written out
+HEARTBEAT_SAVE_SECONDS = 60   # how often the wall-clock marker is persisted
+
+def seconds_since_last_round():
+    """Wall-clock seconds since the last round ran, across a restart.
+
+    time.monotonic() starts again with the process, so `_last_round` cannot see
+    a hole the process itself did not live through — and a restart is the normal
+    way a long outage ends: redeploy, crash, host recycle. The marker is saved
+    with the rest of the state, so the next process can measure what it missed.
+    """
+    mark = db.get("last_round_utc")
+    if not mark:
+        return None                  # a first-ever start is not an outage
+    try:
+        then = datetime.datetime.fromisoformat(mark)
+    except ValueError:
+        return None
+    return (datetime.datetime.now(datetime.timezone.utc) - then).total_seconds()
 
 def scheduler_tick_all():
     """One round of reminders for every active user."""
-    global _last_round
+    global _last_round, _heartbeat_saved
     # Rounds are TICK_SECONDS apart. A much longer silence means the process was
     # stopped, suspended or asleep, and any reminder due in that hole was skipped
-    # without anyone noticing — so the gap itself is the evidence.
-    if _last_round is not None:
-        gap = time.monotonic() - _last_round
-        if gap > TICK_SECONDS * 4:
-            dispatch_note("gaps")
-            dispatch_note("gap_max_s", gap)
-    _last_round = time.monotonic()
+    # without anyone noticing — so the gap itself is the evidence. On the first
+    # round of a process there is no monotonic reading to compare against, so
+    # fall back to the marker that outlived the restart.
+    mono = time.monotonic()
+    gap = (mono - _last_round) if _last_round is not None else seconds_since_last_round()
+    if gap is not None and gap > TICK_SECONDS * 4:
+        dispatch_note("gaps")
+        dispatch_note("gap_max_s", gap)
+    _last_round = mono
+    # Written every round, flushed now and then: save() rewrites the whole state
+    # document, which is too much to do every TICK_SECONDS just for a timestamp.
+    db["last_round_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if mono - _heartbeat_saved >= HEARTBEAT_SAVE_SECONDS:
+        _heartbeat_saved = mono
+        save()
     for u in list(db["users"].values()):
         if u.get("paused") or u.get("blocked"):
             continue
