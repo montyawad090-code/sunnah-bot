@@ -77,6 +77,27 @@ The bot only sends reminders while the script is running. Options:
 - **A free/cheap cloud host** (Render, Railway, Fly.io, a small VPS) — always on,
   independent of your PC. See [DEPLOY.md](DEPLOY.md).
 
+### Checking reminders actually went out
+
+When `PORT` is set, the bot answers `GET /dispatch` with today's reminder ledger as
+JSON — this is what the daily health check reads:
+
+```json
+{ "date": "2026-09-26", "users": 12, "active": 11, "missed_total": 0,
+  "reminders": { "salah_Fajr": { "sent": 11, "skipped": 0, "missed": 0, "pending": 0, "late_max": 8 } } }
+```
+
+Per reminder: `sent` went out, `skipped` had nothing to say today (e.g. no fasting
+occasion), `missed` came due and never went out, `pending` hasn't come round yet, and
+`late_max` is the worst gap in seconds between a reminder's time and when it sent.
+
+`missed` is the one to watch — it is how a silent failure becomes visible. `sent` on its
+own only records successes, so without it a reminder that never fired looks exactly like a
+quiet day. Reminders only fire while the process is running, so downtime shows up here.
+
+The report is counts only: no chat ids, cities, locations or message text — the same bar
+as the logs.
+
 ### Where users are saved
 
 Everyone's settings are saved in `state.json` next to the script (or in

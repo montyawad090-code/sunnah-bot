@@ -10,6 +10,7 @@ Run:  python test_sunnah_bot.py       (or: python -m pytest -q)
 """
 import datetime
 import io
+import json
 import os
 import sys
 import tempfile
@@ -237,6 +238,114 @@ class TestScheduler(BotTestBase):
         self.assertIn("Morning", by_chat[1])
         self.assertIn("أذكار الصباح", by_chat[2])
         self.assertNotIn(3, by_chat)
+
+
+class TestDispatchLedger(BotTestBase):
+    """The record the daily health check reads: fired exactly once, and on time?"""
+
+    def setUp(self):
+        super().setUp()
+        # created=0 ("we've always had this user") so the new-user grace period in
+        # due() doesn't suppress misses depending on the hour the suite runs.
+        self.u.update({"city": "Bristol", "country": "United Kingdom", "created": 0})
+        self.seed_times()
+
+    def at(self, hhmm, sec=30):
+        return datetime.datetime.combine(TODAY, datetime.time.fromisoformat(f"{hhmm}:{sec:02d}"))
+
+    def test_send_records_the_time_it_went_out(self):
+        bot.scheduler_tick(self.at("12:00", 17))
+        self.assertEqual(self.u["sent_today"]["salah_Dhuhr"], "12:00:17")
+        self.assertEqual(self.u["due_today"]["salah_Dhuhr"], "12:00")
+
+    def test_lateness_is_derivable(self):
+        bot.scheduler_tick(self.at("12:02", 5))  # still inside the 3-minute window
+        self.assertEqual(bot.late_seconds(self.u["due_today"]["salah_Dhuhr"],
+                                          self.u["sent_today"]["salah_Dhuhr"]), 125)
+
+    def test_still_fires_exactly_once(self):
+        bot.scheduler_tick(self.at("12:00"))
+        n = len(self.sent)
+        bot.scheduler_tick(self.at("12:01"))
+        bot.scheduler_tick(self.at("12:02"))
+        self.assertEqual(len(self.sent), n)
+
+    def test_reminder_that_never_fired_is_recorded_as_missed(self):
+        # the process was down over Dhuhr and only ticks again at 14:00
+        bot.scheduler_tick(self.at("14:00"))
+        self.assertEqual(self.u["missed_today"]["salah_Dhuhr"], "12:00")
+        self.assertNotIn("salah_Dhuhr", self.u["sent_today"])
+
+    def test_a_miss_is_recorded_once_not_every_tick(self):
+        bot.scheduler_tick(self.at("14:00"))
+        first = dict(self.u["missed_today"])
+        bot.scheduler_tick(self.at("14:30"))
+        self.assertEqual(self.u["missed_today"], first)      # not re-stamped every 30s
+        self.assertEqual(first["salah_Fajr"], "05:00")       # everything already past is in there
+        self.assertEqual(first["salah_Dhuhr"], "12:00")
+        self.assertNotIn("salah_Asr", first)                 # 15:30 hasn't come round yet
+
+    def test_not_a_miss_for_someone_who_started_after_the_time(self):
+        self.u["created"] = self.at("13:00").timestamp()
+        bot.scheduler_tick(self.at("14:00"))
+        self.assertNotIn("salah_Dhuhr", self.u["missed_today"])
+
+    def test_failed_send_is_a_miss_not_a_send(self):
+        bot.send = lambda *a, **k: False  # Telegram unreachable
+        bot.scheduler_tick(self.at("12:00"))
+        self.assertNotIn("salah_Dhuhr", self.u["sent_today"])
+        bot.scheduler_tick(self.at("12:05"))   # window gone, still nothing sent
+        self.assertEqual(self.u["missed_today"]["salah_Dhuhr"], "12:00")
+
+    def test_nothing_to_say_is_skipped_not_sent(self):
+        self.seed_times(hijri={"day": 5, "month": 3})   # no fasting occasion today
+        bot.scheduler_tick(self.at(bot.HADITH_TIME))
+        self.assertEqual(self.u["sent_today"]["occasion"], "skipped")
+
+    def test_ledger_resets_on_a_new_day(self):
+        bot.scheduler_tick(self.at("12:00"))
+        self.u["sent_date"] = "1999-01-01"
+        bot.reset_daily_if_needed()
+        self.assertEqual((self.u["sent_today"], self.u["due_today"], self.u["missed_today"]), ({}, {}, {}))
+
+    def test_old_list_shaped_ledger_is_migrated(self):
+        db = bot.load_db({"users": {"7": {"chat_id": 7, "sent_today": ["morning", "salah_Fajr"]}}})
+        self.assertEqual(db["users"]["7"]["sent_today"], {"morning": "", "salah_Fajr": ""})
+
+
+class TestDispatchReport(BotTestBase):
+    def setUp(self):
+        super().setUp()
+        self.u.update({"city": "Bristol", "country": "United Kingdom", "created": 0})
+        self.seed_times()
+
+    def test_totals_sends_misses_and_worst_lateness(self):
+        other = bot.use(bot.register(bot.new_user(2)))
+        other.update({"city": "Bristol", "country": "United Kingdom"})
+        self.seed_times()
+        bot.scheduler_tick(datetime.datetime.combine(TODAY, datetime.time(12, 1, 40)))
+        bot.use(self.u)
+        bot.scheduler_tick(datetime.datetime.combine(TODAY, datetime.time(12, 0, 5)))
+
+        r = bot.dispatch_report()["reminders"]["salah_Dhuhr"]
+        self.assertEqual((r["sent"], r["missed"], r["skipped"]), (2, 0, 0))
+        self.assertEqual(r["late_max"], 100)   # the worse of +5s and +100s
+
+    def test_report_counts_paused_users_but_does_not_check_them(self):
+        self.u["paused"] = True
+        rep = bot.dispatch_report()
+        self.assertEqual((rep["users"], rep["active"]), (1, 0))
+
+    def test_report_carries_nothing_identifying(self):
+        self.u.update({"city": "Bristol", "lat": 51.45, "lng": -2.58})
+        bot.scheduler_tick(datetime.datetime.combine(TODAY, datetime.time(12, 0, 5)))
+        blob = json.dumps(bot.dispatch_report())
+        for leak in ("Bristol", "51.45", "-2.58", "chat_id", '"1"'):
+            self.assertNotIn(leak, blob)
+
+    def test_missed_total_surfaces_a_silent_failure(self):
+        bot.scheduler_tick(datetime.datetime.combine(TODAY, datetime.time(14, 0, 0)))
+        self.assertGreater(bot.dispatch_report()["missed_total"], 0)
 
 
 class TestSend(BotTestBase):
