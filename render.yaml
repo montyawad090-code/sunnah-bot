@@ -13,6 +13,8 @@ services:
         sync: false
       - key: DATABASE_URL       # free Postgres (Supabase/Neon) so users survive redeploys
         sync: false
+      - key: HEALTH_TOKEN       # gates /health, the reminder ledger the daily check reads
+        generateValue: true
       - key: LANG               # default language for new users
         value: "en"
       - key: MORNING_TIME

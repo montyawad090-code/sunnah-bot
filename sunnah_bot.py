@@ -20,7 +20,7 @@ Setup (once):
 Send /help inside Telegram for the list of commands.
 """
 
-import json, os, re, time, random, datetime, threading
+import hmac, json, os, re, time, random, datetime, threading
 from zoneinfo import ZoneInfo
 import requests
 
@@ -273,6 +273,9 @@ DATABASE_URL = cfg("DATABASE_URL", "database_url")
 TICK_SECONDS = 30          # how often reminders are checked
 SEND_INTERVAL = 0.05       # pause between scheduled sends (Telegram allows ~30/s)
 MAX_CITY_LEN = 80
+# Anyone can read /health when HEALTH_TOKEN is unset; it holds counts only, but
+# set it on a public host so the numbers aren't world-readable.
+HEALTH_TOKEN = cfg("HEALTH_TOKEN", "health_token")
 
 # ----------------------------------------------------------------------------
 # Storage — every user's settings live in one JSON document, kept in
@@ -354,6 +357,7 @@ USER_DEFAULTS = {
     "paused": False,
     "blocked": False,           # the user blocked the bot; resumes when they write again
     "sent_today": [], "sent_date": "",
+    "missed_today": [],         # reminder keys whose send window closed unsent (see due())
 }
 
 def new_user(chat_id):
@@ -369,6 +373,7 @@ def load_db(data):
         if old.get("chat_id"):
             data["users"][str(old["chat_id"])] = {k: old[k] for k in USER_DEFAULTS if k in old}
     data.setdefault("last_update_id", 0)
+    data.setdefault("dispatch", {})     # see "Dispatch ledger" below
     for cid, u in data["users"].items():
         for k, v in USER_DEFAULTS.items():
             u.setdefault(k, json.loads(json.dumps(v)))
@@ -660,6 +665,125 @@ def times_message():
     return L(f"🕌 *Prayer times — {place_name()}*\n{lines}", f"🕌 *أوقات الصلاة — {place_name()}*\n{lines}") + note
 
 # ----------------------------------------------------------------------------
+# Dispatch ledger — the evidence that reminders actually went out.
+#
+# Counters only: how many of each reminder were sent, failed, sent twice or
+# missed, and how late they were. Nothing here identifies a person — no chat
+# ids, no cities, no per-user timeline — so it stays true to the privacy note in
+# README.md while still letting the daily health check pass or fail on facts.
+#
+# Rows are keyed by the UTC date the record was made, not the user's local date:
+# users are in many timezones, so a UTC day is the only window that is complete
+# and final at a known moment (00:00 UTC). Read them from /health.
+# ----------------------------------------------------------------------------
+DISPATCH_KEEP_DAYS = 8         # a week of history, plus today
+LATE_WINDOW_MINUTES = 3        # due() sends within this long after the target time
+MISS_GRACE_MINUTES = 30        # …and past that we can still tell it never went out
+DISPATCH_OUTCOMES = ("sent", "failed", "dupe", "missed")
+
+def utc_today():
+    return datetime.datetime.now(datetime.timezone.utc).date()
+
+def dispatch_day(day=None):
+    """Today's (UTC) ledger row, pruning rows older than DISPATCH_KEEP_DAYS."""
+    day = (day or utc_today()).isoformat()
+    led = db.setdefault("dispatch", {})
+    if day not in led:
+        cutoff = (utc_today() - datetime.timedelta(days=DISPATCH_KEEP_DAYS - 1)).isoformat()
+        for old in [k for k in led if k < cutoff]:
+            del led[old]
+        led[day] = {"reminders": {}, "prayers_unavailable": 0, "gaps": 0, "gap_max_s": 0}
+    return led[day]
+
+def dispatch_record(key, outcome, late_s=0):
+    """Count one outcome for reminder `key`. Called once per user per fire."""
+    row = dispatch_day()["reminders"].setdefault(
+        key, {"sent": 0, "failed": 0, "dupe": 0, "missed": 0, "late_max_s": 0, "late_sum_s": 0})
+    row[outcome] += 1
+    if outcome == "sent":
+        row["late_sum_s"] += int(late_s)
+        row["late_max_s"] = max(row["late_max_s"], int(late_s))
+    save()
+
+def dispatch_note(field, value=1):
+    """Count a whole-day condition: a prayer-times outage, or a scheduler gap."""
+    row = dispatch_day()
+    if field == "gap_max_s":
+        row["gap_max_s"] = max(row.get("gap_max_s", 0), int(value))
+    else:
+        row[field] = row.get(field, 0) + int(value)
+    save()
+
+def dispatch_report(days=DISPATCH_KEEP_DAYS):
+    """The ledger plus per-day totals, ready to serialise. Read-only."""
+    # The health server answers on its own thread while the main loop writes, so
+    # work from a snapshot; the dicts are tiny, so a clash is momentary.
+    for _ in range(3):
+        try:
+            led = json.loads(json.dumps(db.get("dispatch", {})))
+            break
+        except RuntimeError:
+            time.sleep(0.05)
+    else:
+        led = {}
+    out = {}
+    for day in sorted(led)[-days:]:
+        row, rem = led[day], led[day].get("reminders", {})
+        totals = {o: sum(r.get(o, 0) for r in rem.values()) for o in DISPATCH_OUTCOMES}
+        totals["late_max_s"] = max([r.get("late_max_s", 0) for r in rem.values()] or [0])
+        for f in ("prayers_unavailable", "gaps", "gap_max_s"):
+            totals[f] = row.get(f, 0)
+        out[day] = {"totals": totals, "reminders": rem}
+    return out
+
+# Thresholds the daily health check reads. Anything in `fail` means a reminder
+# was not delivered as promised; `warn` means it recovered by itself.
+MAX_GAP_SECONDS = 5 * 60       # scheduler silence longer than this can skip a reminder
+
+def dispatch_verdict(day=None):
+    """Pass/fail for one settled UTC day. Empty rows fail: a day with active
+    users and no sends at all means the scheduler never ran."""
+    day = (day or (utc_today() - datetime.timedelta(days=1))).isoformat()
+    report = dispatch_report()
+    row = report.get(day)
+    active = sum(1 for u in db["users"].values() if not u.get("paused") and not u.get("blocked"))
+    fail, warn = [], []
+    if row is None:
+        totals = dict({o: 0 for o in DISPATCH_OUTCOMES},
+                      late_max_s=0, prayers_unavailable=0, gaps=0, gap_max_s=0)
+        if active:
+            fail.append(f"no dispatch recorded at all for {day} ({active} active user(s))")
+    else:
+        totals = row["totals"]
+        if active and not totals["sent"]:
+            fail.append(f"no reminder was sent on {day} ({active} active user(s))")
+        if totals["missed"]:
+            fail.append(f"{totals['missed']} reminder(s) never went out")
+        if totals["dupe"]:
+            fail.append(f"{totals['dupe']} reminder(s) were sent twice")
+        if totals["late_max_s"] > LATE_WINDOW_MINUTES * 60:
+            fail.append(f"a reminder was {totals['late_max_s']}s late")
+        if totals["gap_max_s"] > MAX_GAP_SECONDS:
+            fail.append(f"the scheduler was silent for {totals['gap_max_s']}s")
+        if totals["prayers_unavailable"]:
+            warn.append(f"prayer times were unavailable {totals['prayers_unavailable']} time(s)")
+        if totals["failed"]:
+            warn.append(f"{totals['failed']} send(s) failed and were retried")
+    return {"date": day, "pass": not fail, "fail": fail, "warn": warn, "totals": totals}
+
+def health_payload():
+    users = list(db["users"].values())
+    return {
+        "now_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "users": len(users),
+        "users_active": sum(1 for u in users if not u.get("paused") and not u.get("blocked")),
+        "late_window_s": LATE_WINDOW_MINUTES * 60,
+        "max_gap_s": MAX_GAP_SECONDS,
+        "verdict": dispatch_verdict(),
+        "dispatch": dispatch_report(),
+    }
+
+# ----------------------------------------------------------------------------
 # Reminders
 # ----------------------------------------------------------------------------
 def reset_daily_if_needed():
@@ -667,16 +791,35 @@ def reset_daily_if_needed():
     if state.get("sent_date") != today:
         state["sent_date"] = today
         state["sent_today"] = []
+        state["missed_today"] = []
         save()
 
+_late = {}   # reminder key -> seconds past its scheduled minute, set by due()
+
 def due(key, hhmm, now):
-    """Return True if reminder `key` scheduled at hhmm is due and unsent."""
+    """Return True if reminder `key` scheduled at hhmm is due and unsent.
+
+    Every caller already applies that reminder's own conditions (the right
+    weekday, prayer times in hand, …), so this is also the one place that knows
+    a reminder was owed. When the send window closes with nothing sent — the
+    process was down, or Telegram kept refusing — record it as missed, once."""
     if key in state["sent_today"]:
         return False
     h, m = map(int, hhmm.split(":"))
     target = now.replace(hour=h, minute=m, second=0, microsecond=0)
     # fire within a 0..3 minute window after the target so we never miss it
-    return target <= now < target + datetime.timedelta(minutes=3)
+    late = now - target
+    if datetime.timedelta(0) <= late < datetime.timedelta(minutes=LATE_WINDOW_MINUTES):
+        _late[key] = late.total_seconds()
+        return True
+    # Past the window, but only for a while: a user who joined this afternoon was
+    # never owed this morning's adhkar, and must not be counted as a miss.
+    if (datetime.timedelta(minutes=LATE_WINDOW_MINUTES) <= late
+            < datetime.timedelta(minutes=MISS_GRACE_MINUTES)
+            and key not in state["missed_today"]):
+        state["missed_today"].append(key)
+        dispatch_record(key, "missed")
+    return False
 
 def mark(key):
     state["sent_today"].append(key)
@@ -685,10 +828,18 @@ def mark(key):
 def remind(key, text):
     """Send a scheduled reminder; mark it done only once Telegram accepts it,
     so a failed send is retried on the next tick. text=None: nothing to say today."""
+    late = _late.pop(key, 0)
     if text is None:
         return mark(key)
+    if key in state["sent_today"]:
+        # due() rules this out, so reaching here means a new caller skipped it.
+        # Count it rather than trust the guard: the health check fails on dupes.
+        dispatch_record(key, "dupe")
     if send(text):
         mark(key)
+        dispatch_record(key, "sent", late)
+    else:
+        dispatch_record(key, "failed")
     time.sleep(SEND_INTERVAL)
 
 def scheduler_tick(now=None):
@@ -698,7 +849,13 @@ def scheduler_tick(now=None):
     # Refresh today's prayer times first — this also refreshes the Hijri date
     # the fasting reminders below depend on, and may detect the city's timezone,
     # so read the clock only afterwards.
+    skey = settings_key() if has_location() else None
+    stale = _fetch_fail.get(skey) if skey else None
     t = ensure_prayers()
+    # A fresh entry in _fetch_fail means Aladhan was actually asked and didn't
+    # answer usefully — not just that ensure_prayers() is still backing off.
+    if skey and _fetch_fail.get(skey) not in (None, stale):
+        dispatch_note("prayers_unavailable")
     now = now or now_local()
     reset_daily_if_needed()
 
@@ -770,8 +927,20 @@ def scheduler_tick(now=None):
                 remind("friday_dua", L("⏳ *The last hour before Maghrib (Friday)*\n\nThis is a time when no Muslim asks Allah for good except that He grants it. (Bukhari)\n\nRaise your hands and make du'a. 🤲",
                                        "⏳ *الساعة الأخيرة قبل المغرب (الجمعة)*\n\nساعة لا يسأل الله فيها مسلمٌ خيرًا إلا أعطاه إياه. (البخاري)\n\nارفع يديك وادعُ. 🤲"))
 
+_last_round = None   # monotonic time of the previous round, to spot lost time
+
 def scheduler_tick_all():
     """One round of reminders for every active user."""
+    global _last_round
+    # Rounds are TICK_SECONDS apart. A much longer silence means the process was
+    # stopped, suspended or asleep, and any reminder due in that hole was skipped
+    # without anyone noticing — so the gap itself is the evidence.
+    if _last_round is not None:
+        gap = time.monotonic() - _last_round
+        if gap > TICK_SECONDS * 4:
+            dispatch_note("gaps")
+            dispatch_note("gap_max_s", gap)
+    _last_round = time.monotonic()
     for u in list(db["users"].values()):
         if u.get("paused") or u.get("blocked"):
             continue
@@ -1100,7 +1269,30 @@ def run_forever():
 # Tiny health-check web server. Cloud hosts (Render, Koyeb, etc.) set $PORT and
 # expect the process to answer HTTP. An uptime pinger (e.g. UptimeRobot) hits
 # "/" every few minutes so the free instance never goes to sleep.
+#
+# "/health" returns the dispatch ledger as JSON for the daily health check. See
+# "Did the reminders go out?" in README.md.
 # ----------------------------------------------------------------------------
+def health_response(path):
+    """(status, content type, body bytes) for one health-server request."""
+    url, _, query = path.partition("?")
+    if url.rstrip("/") not in ("/health", "/healthz"):
+        return 200, "text/plain; charset=utf-8", "Sunnah Companion bot is alive 🤍".encode()
+    if HEALTH_TOKEN:
+        from urllib.parse import parse_qs
+        given = parse_qs(query).get("token", [""])[0]
+        if not hmac.compare_digest(given.encode(), str(HEALTH_TOKEN).encode()):
+            return 404, "text/plain; charset=utf-8", b"Not found"
+    status = 200
+    try:
+        payload = health_payload()
+    except Exception as e:        # a broken probe must not take the bot down, but
+        status = 503              # it must not look like a pass either
+        payload = {"error": type(e).__name__}
+        print("Health report failed:", type(e).__name__, e)
+    body = json.dumps(payload, ensure_ascii=False, indent=1).encode()
+    return status, "application/json; charset=utf-8", body
+
 def start_health_server():
     port = os.environ.get("PORT")
     if not port:
@@ -1112,10 +1304,12 @@ def start_health_server():
         sys_version = ""
 
         def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
+            status, ctype, body = health_response(self.path)
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(b"Sunnah Companion bot is alive \xf0\x9f\xa4\x8d")
+            self.wfile.write(body)
 
         def do_HEAD(self):  # some uptime pingers use HEAD
             self.send_response(200)
