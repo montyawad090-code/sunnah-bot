@@ -353,12 +353,20 @@ USER_DEFAULTS = {
     "tz": None, "tz_fixed": False,
     "paused": False,
     "blocked": False,           # the user blocked the bot; resumes when they write again
-    "sent_today": [], "sent_date": "",
+    # Today's dispatch ledger, reset by reset_daily_if_needed(). Three flat maps,
+    # all keyed by reminder key ("salah_Fajr", "morning", …), so the daily health
+    # check can answer "fired exactly once, and on time?" — see dispatch_report().
+    "sent_today": {},           # key -> "HH:MM:SS" it went out, or "skipped" (nothing to say)
+    "due_today": {},            # key -> "HH:MM" it was scheduled for
+    "missed_today": {},         # key -> "HH:MM" it was due at, and never sent
+    "sent_date": "",
+    "created": 0.0,             # unix time we first saw this user; 0 = unknown (pre-upgrade)
 }
 
 def new_user(chat_id):
     u = json.loads(json.dumps(USER_DEFAULTS))
     u["chat_id"] = chat_id
+    u["created"] = time.time()
     return u
 
 def load_db(data):
@@ -373,6 +381,10 @@ def load_db(data):
         for k, v in USER_DEFAULTS.items():
             u.setdefault(k, json.loads(json.dumps(v)))
         u["chat_id"] = u["chat_id"] if u["chat_id"] is not None else cid
+        # sent_today was a plain list of keys before send times were recorded;
+        # "" means "sent, at an hour we didn't keep".
+        if isinstance(u["sent_today"], list):
+            u["sent_today"] = {k: "" for k in u["sent_today"]}
     return data
 
 db = load_db(store.load())
@@ -662,31 +674,62 @@ def times_message():
 # ----------------------------------------------------------------------------
 # Reminders
 # ----------------------------------------------------------------------------
+SEND_WINDOW = datetime.timedelta(minutes=3)   # how long after its time a reminder may still fire
+
+# The clock the current scheduler_tick() is running on. mark() stamps sends with
+# it so a simulated tick records the simulated time, not the wall clock.
+_tick_now = None
+
 def reset_daily_if_needed():
     today = today_local().isoformat()
     if state.get("sent_date") != today:
         state["sent_date"] = today
-        state["sent_today"] = []
+        state["sent_today"] = {}
+        state["due_today"] = {}
+        state["missed_today"] = {}
         save()
 
 def due(key, hhmm, now):
-    """Return True if reminder `key` scheduled at hhmm is due and unsent."""
+    """Return True if reminder `key` scheduled at hhmm is due and unsent.
+
+    Also keeps the ledger: records what `key` was due at, and records a miss once
+    the send window has passed with nothing sent. `sent_today` on its own only
+    ever records successes, so without this a reminder that silently never fired
+    is indistinguishable from one that was never due.
+    """
+    if state["due_today"].get(key) != hhmm:
+        state["due_today"][key] = hhmm
+        save()
     if key in state["sent_today"]:
         return False
     h, m = map(int, hhmm.split(":"))
     target = now.replace(hour=h, minute=m, second=0, microsecond=0)
     # fire within a 0..3 minute window after the target so we never miss it
-    return target <= now < target + datetime.timedelta(minutes=3)
+    if target <= now < target + SEND_WINDOW:
+        return True
+    # Past the window and still unsent: a miss. Not a miss for someone who only
+    # pressed START after the time had already gone by.
+    if now >= target + SEND_WINDOW and state["missed_today"].get(key) != hhmm:
+        created = state.get("created") or 0
+        if not created or created <= target.timestamp():
+            state["missed_today"][key] = hhmm
+            save()
+    return False
 
-def mark(key):
-    state["sent_today"].append(key)
+def mark(key, at=None):
+    """Record `key` as resolved for today: the time it went out, or "skipped" when
+    there was nothing to say. The time is what makes "on time" checkable later."""
+    if at is None:
+        at = (_tick_now or now_local()).strftime("%H:%M:%S")
+    state["sent_today"][key] = at
+    state["missed_today"].pop(key, None)
     save()
 
 def remind(key, text):
     """Send a scheduled reminder; mark it done only once Telegram accepts it,
     so a failed send is retried on the next tick. text=None: nothing to say today."""
     if text is None:
-        return mark(key)
+        return mark(key, "skipped")
     if send(text):
         mark(key)
     time.sleep(SEND_INTERVAL)
@@ -698,8 +741,10 @@ def scheduler_tick(now=None):
     # Refresh today's prayer times first — this also refreshes the Hijri date
     # the fasting reminders below depend on, and may detect the city's timezone,
     # so read the clock only afterwards.
+    global _tick_now
     t = ensure_prayers()
     now = now or now_local()
+    _tick_now = now
     reset_daily_if_needed()
 
     if due("morning", MORNING, now):
@@ -1097,9 +1142,59 @@ def run_forever():
             flush()
 
 # ----------------------------------------------------------------------------
+# Dispatch report
+# ----------------------------------------------------------------------------
+def late_seconds(due_hhmm, at_hhmmss):
+    """Seconds between when a reminder was due and when it actually went out."""
+    h, m = map(int, due_hhmm.split(":"))
+    parts = [int(x) for x in at_hhmmss.split(":")]
+    at = parts[0] * 3600 + parts[1] * 60 + (parts[2] if len(parts) > 2 else 0)
+    return at - (h * 3600 + m * 60)
+
+def dispatch_report():
+    """Today's reminder ledger, totalled across users.
+
+    Deliberately carries nothing identifying: counts per reminder key only, no
+    chat ids, cities, locations or message text — same bar as the logs. That is
+    enough for the daily health check to see whether every reminder that came due
+    went out exactly once and close to its time.
+    """
+    reminders, users, active = {}, 0, 0
+    for u in db["users"].values():
+        users += 1
+        if u.get("paused") or u.get("blocked"):
+            continue
+        active += 1
+        sent = u.get("sent_today") or {}
+        dues = u.get("due_today") or {}
+        missed = u.get("missed_today") or {}
+        for k in set(sent) | set(dues) | set(missed):
+            r = reminders.setdefault(k, {"sent": 0, "skipped": 0, "missed": 0, "pending": 0, "late_max": 0})
+            at = sent.get(k)
+            if at == "skipped":
+                r["skipped"] += 1
+            elif at is not None:
+                r["sent"] += 1
+                d = dues.get(k)
+                if at and d:
+                    r["late_max"] = max(r["late_max"], late_seconds(d, at))
+            elif k in missed:
+                r["missed"] += 1
+            else:
+                r["pending"] += 1   # due later today, hasn't come round yet
+    return {
+        "date": datetime.date.today().isoformat(),   # host date; users' own dates are their local ones
+        "users": users,
+        "active": active,
+        "missed_total": sum(r["missed"] for r in reminders.values()),
+        "reminders": dict(sorted(reminders.items())),
+    }
+
+# ----------------------------------------------------------------------------
 # Tiny health-check web server. Cloud hosts (Render, Koyeb, etc.) set $PORT and
 # expect the process to answer HTTP. An uptime pinger (e.g. UptimeRobot) hits
 # "/" every few minutes so the free instance never goes to sleep.
+# "/dispatch" serves the ledger above for the daily health check.
 # ----------------------------------------------------------------------------
 def start_health_server():
     port = os.environ.get("PORT")
@@ -1112,6 +1207,14 @@ def start_health_server():
         sys_version = ""
 
         def do_GET(self):
+            if self.path.split("?")[0].rstrip("/") == "/dispatch":
+                body = json.dumps(dispatch_report(), indent=1).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
